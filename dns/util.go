@@ -117,6 +117,11 @@ func isIPRequest(q D.Question) bool {
 func transform(servers []NameServer, resolver *Resolver) []dnsClient {
 	ret := []dnsClient{}
 	for _, s := range servers {
+		if s.Net == "localresolve" {
+			ret = append(ret, &localResolveClient{})
+			continue
+		}
+
 		if s.Net == "https" {
 			ret = append(ret, newDoHClient(s.Addr, resolver))
 			continue

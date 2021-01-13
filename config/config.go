@@ -445,6 +445,7 @@ func hostWithDefaultPort(host string, defPort string) (string, error) {
 func parseNameServer(servers []string) ([]dns.NameServer, error) {
 	nameservers := []dns.NameServer{}
 
+	SS:
 	for idx, server := range servers {
 		// parse without scheme .e.g 8.8.8.8:53
 		if !strings.Contains(server, "://") {
@@ -470,6 +471,29 @@ func parseNameServer(servers []string) ([]dns.NameServer, error) {
 			clearURL := url.URL{Scheme: "https", Host: u.Host, Path: u.Path}
 			addr = clearURL.String()
 			dnsNetType = "https" // DNS over HTTPS
+		case "localresolve":
+			addr = net.JoinHostPort("0.0.0.0", "0")
+			dnsNetType = "localresolve"
+		case "currlocalresolve":
+			currNameservers, _, _ := dns.GetCurrLocalResolver()
+			if len(currNameservers) == 0 {
+				log.Warnln("currlocalresolve: No current local DNS server was fetched. There might be an error")
+			}
+			for _, n := range currNameservers {
+				addr, err := hostWithDefaultPort(n, "53")
+				if err != nil {
+					return nil, fmt.Errorf("DNS current local resolver addr format error: %s", err.Error())
+				}
+				log.Infoln("Added current local DNS server to built-in DNS: %s", addr)
+				nameservers = append(
+					nameservers,
+					dns.NameServer{
+						Net:  "", // UDP
+						Addr: addr,
+					},
+				)
+			}
+			continue SS
 		default:
 			return nil, fmt.Errorf("DNS NameServer[%d] unsupport scheme: %s", idx, u.Scheme)
 		}
