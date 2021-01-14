@@ -22,9 +22,9 @@ func isNameserversFieldDelimiter(r rune) bool {
 }
 
 func GetCurrDhcpNameservers() (nameservers []string, domain string, searchs []string) {
-	out, err := exec.Command("route").Output()
+	out, err := exec.Command("route", "-n", "get", "default").Output()
 	if err != nil {
-		log.Warnln("GetCurrDhcpNameservers(): %s", err.Error())
+		log.Warnln("GetCurrDhcpNameservers() route: %s", err.Error())
 		return []string{}, "", []string{}
 	}
 
@@ -44,9 +44,9 @@ func GetCurrDhcpNameservers() (nameservers []string, domain string, searchs []st
 		return []string{}, "", []string{}
 	}
 
-	out2, err := exec.Command("ipconfig getpacket " + interfaceName).Output()
+	out2, err := exec.Command("ipconfig", "getpacket", interfaceName).Output()
 	if err != nil {
-		log.Warnln("GetCurrDhcpNameservers(): %s", err.Error())
+		log.Warnln("GetCurrDhcpNameservers() ipconfig getpacket: %s", err.Error())
 		return []string{}, "", []string{}
 	}
 
