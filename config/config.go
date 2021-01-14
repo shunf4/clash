@@ -482,9 +482,29 @@ func parseNameServer(servers []string) ([]dns.NameServer, error) {
 			for _, n := range currNameservers {
 				addr, err := hostWithDefaultPort(n, "53")
 				if err != nil {
-					return nil, fmt.Errorf("DNS current local resolver addr format error: %s", err.Error())
+					return nil, fmt.Errorf("DNS current local DNS server addr format error: %s", err.Error())
 				}
 				log.Infoln("Added current local DNS server to built-in DNS: %s", addr)
+				nameservers = append(
+					nameservers,
+					dns.NameServer{
+						Net:  "", // UDP
+						Addr: addr,
+					},
+				)
+			}
+			continue SS
+		case "currdhcpnameservers":
+			currDhcpNameservers, _, _ := dns.GetCurrDhcpNameservers()
+			if len(currDhcpNameservers) == 0 {
+				log.Warnln("currdhcpnameservers: No current DHCP DNS server was fetched.")
+			}
+			for _, n := range currDhcpNameservers {
+				addr, err := hostWithDefaultPort(n, "53")
+				if err != nil {
+					return nil, fmt.Errorf("DNS current DHCP DNS server addr format error: %s", err.Error())
+				}
+				log.Infoln("Added current DHCP DNS server to built-in DNS: %s", addr)
 				nameservers = append(
 					nameservers,
 					dns.NameServer{
