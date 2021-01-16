@@ -127,6 +127,18 @@ func transform(servers []NameServer, resolver *Resolver) []dnsClient {
 			continue
 		}
 
+		if s.Net == "dhcpnameservers" {
+			ret = append(ret, &dhcpNameserversClient{
+				Client: &D.Client{
+					Net: "udp",
+					UDPSize: 4096,
+					Timeout: 5 * time.Second,
+				},
+				cache: cache.New(5 * time.Second),
+			})
+			continue
+		}
+
 		host, port, _ := net.SplitHostPort(s.Addr)
 		ret = append(ret, &client{
 			Client: &D.Client{

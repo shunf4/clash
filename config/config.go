@@ -474,6 +474,9 @@ func parseNameServer(servers []string) ([]dns.NameServer, error) {
 		case "localresolve":
 			addr = net.JoinHostPort("0.0.0.0", "0")
 			dnsNetType = "localresolve"
+		case "dhcpnameservers":
+			addr = net.JoinHostPort("0.0.0.0", "0")
+			dnsNetType = "dhcpnameservers"
 		case "currlocalresolve":
 			currNameservers, _, _ := dns.GetCurrLocalResolver()
 			if len(currNameservers) == 0 {
