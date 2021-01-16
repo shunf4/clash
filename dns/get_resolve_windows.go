@@ -19,6 +19,9 @@ func determineSplitChar(s string) string {
 }
 
 func splitStringToList(nsss string) []string {
+	if nsss == "" {
+		return []string{}
+	}
 	splitChar := determineSplitChar(nsss)
 	return strings.Split(nsss, splitChar)
 }
