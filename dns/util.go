@@ -135,6 +135,7 @@ func transform(servers []NameServer, resolver *Resolver) []dnsClient {
 					Timeout: 5 * time.Second,
 				},
 				cache: cache.New(5 * time.Second),
+				lastNameserver: "",
 			})
 			continue
 		}

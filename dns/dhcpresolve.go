@@ -15,6 +15,7 @@ import (
 type dhcpNameserversClient struct {
 	*D.Client
 	cache *cache.Cache
+	lastNameserver string
 }
 
 func (dnc *dhcpNameserversClient) Exchange(m *D.Msg) (msg *D.Msg, err error) {
@@ -27,15 +28,31 @@ func (dnc *dhcpNameserversClient) ExchangeContext(ctx context.Context, m *D.Msg)
 	// get DHCP nameservers from cache
 	ipRaw = dnc.cache.Get("dhcpnameserver")
 	if ipRaw == nil {
+		var ipStr string
+		isNew := false
+
 		nameservers, _, _ := GetCurrDhcpNameservers()
 		if len(nameservers) == 0 {
-			log.Warnln("dhcpnameservers: No current DHCP DNS server was fetched. There might be an error")
-			return nil, errors.New("dhcpnameservers: No current DHCP DNS server was fetched. There might be an error")
-		}
-		ipStr := nameservers[0]
-		if ipStr == "" {
-			log.Warnln("dhcpnameservers: IP string is empty")
-			return nil, errors.New("dhcpnameservers: IP string is empty")
+			if (dnc.lastNameserver == "") {
+				log.Warnln("dhcpnameservers: No current DHCP DNS server was fetched. There might be an error")
+				return nil, errors.New("dhcpnameservers: No current DHCP DNS server was fetched. There might be an error")
+			} else {
+				log.Warnln("dhcpnameservers: No current DHCP DNS server was fetched. There might be an error. Using lastNameserver %s", dnc.lastNameserver)
+				ipStr = dnc.lastNameserver
+			}
+		} else {
+			ipStr = nameservers[0]
+			if ipStr == "" {
+				if (dnc.lastNameserver == "") {
+					log.Warnln("dhcpnameservers: IP string is empty")
+					return nil, errors.New("dhcpnameservers: IP string is empty")
+				} else {
+					log.Warnln("dhcpnameservers: IP string is empty. Using lastNameserver %s", dnc.lastNameserver)
+					ipStr = dnc.lastNameserver
+				}
+			} else {
+				isNew = true
+			}
 		}
 
 		ip = net.ParseIP(ipStr)
@@ -43,8 +60,12 @@ func (dnc *dhcpNameserversClient) ExchangeContext(ctx context.Context, m *D.Msg)
 			return nil, errors.New("dhcpnameservers: parse IP string error")
 		}
 
-		log.Infoln("dhcpnameservers: got DHCP DNS IP %s and store it into cache", ipStr)
-		dnc.cache.Put("dhcpnameserver", ip, 5 * time.Second)
+		dnc.lastNameserver = ipStr
+
+		if isNew {
+			log.Infoln("dhcpnameservers: got DHCP DNS IP %s and store it into cache", ipStr)
+			dnc.cache.Put("dhcpnameserver", ip, 20 * time.Second)
+		}
 	} else {
 		ip = ipRaw.(net.IP)
 	}
