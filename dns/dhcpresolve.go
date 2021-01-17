@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/Dreamacro/clash/common/cache"
@@ -16,6 +17,7 @@ type dhcpNameserversClient struct {
 	*D.Client
 	cache *cache.Cache
 	lastNameserver string
+	mu sync.Mutex
 }
 
 func (dnc *dhcpNameserversClient) Exchange(m *D.Msg) (msg *D.Msg, err error) {
@@ -25,6 +27,9 @@ func (dnc *dhcpNameserversClient) Exchange(m *D.Msg) (msg *D.Msg, err error) {
 func (dnc *dhcpNameserversClient) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, err error) {
 	var ipRaw interface{}
 	var ip net.IP
+
+	dnc.mu.Lock()
+
 	// get DHCP nameservers from cache
 	ipRaw = dnc.cache.Get("dhcpnameserver")
 	if ipRaw == nil {
@@ -64,11 +69,13 @@ func (dnc *dhcpNameserversClient) ExchangeContext(ctx context.Context, m *D.Msg)
 
 		if isNew {
 			log.Infoln("dhcpnameservers: got DHCP DNS IP %s and store it into cache", ipStr)
-			dnc.cache.Put("dhcpnameserver", ip, 20 * time.Second)
+			dnc.cache.Put("dhcpnameserver", ip, 5 * time.Second)
 		}
 	} else {
 		ip = ipRaw.(net.IP)
 	}
+
+	dnc.mu.Unlock()
 
 	d, err := dialer.Dialer()
 	if err != nil {
