@@ -40,6 +40,7 @@ func (dnc *dhcpNameserversClient) ExchangeContext(ctx context.Context, m *D.Msg)
 		if len(nameservers) == 0 {
 			if (dnc.lastNameserver == "") {
 				log.Warnln("dhcpnameservers: No current DHCP DNS server was fetched. There might be an error")
+				dnc.mu.Unlock()
 				return nil, errors.New("dhcpnameservers: No current DHCP DNS server was fetched. There might be an error")
 			} else {
 				log.Warnln("dhcpnameservers: No current DHCP DNS server was fetched. There might be an error. Using lastNameserver %s", dnc.lastNameserver)
@@ -50,6 +51,7 @@ func (dnc *dhcpNameserversClient) ExchangeContext(ctx context.Context, m *D.Msg)
 			if ipStr == "" {
 				if (dnc.lastNameserver == "") {
 					log.Warnln("dhcpnameservers: IP string is empty")
+					dnc.mu.Unlock()
 					return nil, errors.New("dhcpnameservers: IP string is empty")
 				} else {
 					log.Warnln("dhcpnameservers: IP string is empty. Using lastNameserver %s", dnc.lastNameserver)
@@ -62,6 +64,7 @@ func (dnc *dhcpNameserversClient) ExchangeContext(ctx context.Context, m *D.Msg)
 
 		ip = net.ParseIP(ipStr)
 		if ip == nil {
+			dnc.mu.Unlock()
 			return nil, errors.New("dhcpnameservers: parse IP string error")
 		}
 
