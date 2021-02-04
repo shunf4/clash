@@ -11,7 +11,7 @@ import (
 )
 
 func GetCurrDhcpNameservers() (nameservers []string, domain string, searchs []string) {
-	out, err := exec.Command("powershell", "-command", "$ifi=Get-NetRoute -DestinationPrefix 0.0.0.0/0|Select-Object -ExpandProperty ifIndex;Get-WmiObject Win32_NetworkAdapter -Filter InterfaceIndex=$ifi|Select-Object -ExpandProperty GUID").Output()
+	out, err := exec.Command("powershell", "-command", "$ifi=Find-NetRoute -RemoteIPAddress 0.0.0.0|Select InterfaceIndex -Last 1|Select -ExpandProperty InterfaceIndex;Get-WmiObject Win32_NetworkAdapter -Filter InterfaceIndex=$ifi|Select-Object -ExpandProperty GUID").Output()
 	if err != nil {
 		log.Warnln("GetCurrDhcpNameservers() powershell: %s", err.Error())
 		return []string{}, "", []string{}
