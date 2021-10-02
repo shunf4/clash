@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Dreamacro/clash/common/cache"
+	"github.com/Dreamacro/clash/dns/netparam"
 	"github.com/Dreamacro/clash/log"
 
 	D "github.com/miekg/dns"
@@ -123,6 +124,47 @@ func transform(servers []NameServer, resolver *Resolver) []dnsClient {
 			continue
 		case "dhcp":
 			ret = append(ret, newDHCPClient(s.Addr))
+			continue
+		}
+
+		if s.Net == "special" {
+			switch s.Addr {
+			case "localResolveClient":
+				ret = append(ret, &localResolveClient{})
+			case "dhcpNameserversClient":
+				ret = append(ret, &cachedNameserversClient{
+					cache:          cache.New(5 * time.Second),
+					lastNameserver: "",
+					clientName:     s.Addr,
+					getNameservers: func() (nameservers []string, err error) {
+						nameservers, _, _ = netparam.GetDhcpNameservers()
+						return
+					},
+					Client: &D.Client{
+						Net:     "udp",
+						UDPSize: 4096,
+						Timeout: 5 * time.Second,
+					},
+				})
+			case "gatewaysClient":
+				ret = append(ret, &cachedNameserversClient{
+					cache:          cache.New(5 * time.Second),
+					lastNameserver: "",
+					clientName:     s.Addr,
+					getNameservers: func() (nameservers []string, err error) {
+						nameservers = netparam.GetGateways()
+						return
+					},
+					Client: &D.Client{
+						Net:     "udp",
+						UDPSize: 4096,
+						Timeout: 5 * time.Second,
+					},
+				})
+			default:
+				// It should not happen
+				log.Warnln("DNS special:// bad body: %s", s.Addr)
+			}
 			continue
 		}
 

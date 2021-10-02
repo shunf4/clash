@@ -3,7 +3,7 @@
   <br>Clash<br>
 </h1>
 
-<h4 align="center">A rule-based tunnel in Go.</h4>
+<h4 align="center">A rule-based tunnel in Go. [shunf4 fork]</h4>
 
 <p align="center">
   <a href="https://github.com/Dreamacro/clash/actions">
@@ -20,6 +20,47 @@
     <img src="https://img.shields.io/badge/release-Premium-00b4f0?style=flat-square">
   </a>
 </p>
+
+## Shunf4's Fork Added Features
+
+You can add the following special "nameserver" URI to use some system network configuration entries in Clash's built-in DNS server:
+
+#### `special://dynamic-system-resolve-client`
+
+Clash will add a name resolve client alongside other nameservers. This client, when called, will always query the local system for the name (using `net.ResolveIPAddr` in Golang), and pass the result back.
+
+This is useful when you want name query result from your local network in Clash's name resolution.
+
+**Note: when using this special nameserver, do not set Clash's built in server as your system's resolver!**
+
+#### `special://dynamic-dhcp-nameservers-client`
+
+Clash will add a name resolve client alongside other nameservers. This client, when called, will always find current DNS server address(es) **that is acquired from DHCP server (no matter what is set as the local system's resolver)**, query them for the name, and pass the result back.
+
+This is useful when you want name query result from your local network in Clash's name resolution, and you want to set Clash as your system's resolver.
+
+**Not implemented on linux.**
+
+#### `special://dynamic-gateways-client`
+
+Clash will add a name resolve client alongside other nameservers. This client, when called, will always find current **default gateway address(es)**, treat them as DNS server, query them for the name, and pass the result back.
+
+This is useful when you want name query result from your local network (that is possible to be statically configured) in Clash's name resolution, and you want to set Clash as your system's resolver.
+
+#### `special://static-system-nameservers-on-clash-start`
+
+When Clash started, it acquires current system's DNS resolvers **once**, and add them to built-in DNS server's upstream nameservers.
+
+#### `special://static-dhcp-nameservers-on-clash-start`
+
+When Clash started, it acquires DNS resolvers that is from the current network's DHCP resolver **once**, and add them to built-in DNS server's upstream nameservers.
+
+**Not implemented on linux.**
+
+#### `special://static-gateways-on-clash-start`
+
+When Clash started, it acquires current gateway address(es) **once**, and add them to built-in DNS server's upstream nameservers.
+
 
 ## Features
 
