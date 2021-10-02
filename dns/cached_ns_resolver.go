@@ -96,16 +96,20 @@ func (cnc *cachedNameserversClient) ExchangeContext(ctx context.Context, m *D.Ms
 
 	cnc.mu.Unlock()
 
-	d, err := dialer.Dialer()
+	conn, err := dialer.DialContext(ctx, "udp", net.JoinHostPort(ip.String(), "53"))
 	if err != nil {
 		return nil, err
 	}
-
-	cnc.Client.Dialer = d
+	defer conn.Close()
 
 	ch := make(chan dnsClientResult, 1)
 	go func() {
-		msg, _, err := cnc.Client.Exchange(m, net.JoinHostPort(ip.String(), "53"))
+		msg, _, err := cnc.Client.ExchangeWithConn(m, &D.Conn{
+			Conn:         conn,
+			UDPSize:      cnc.Client.UDPSize,
+			TsigSecret:   cnc.Client.TsigSecret,
+			TsigProvider: cnc.Client.TsigProvider,
+		})
 		ch <- dnsClientResult{msg, err}
 	}()
 
