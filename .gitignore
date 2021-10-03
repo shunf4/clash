@@ -5,6 +5,15 @@
 *.so
 *.dylib
 bin/*
+!bin/linux/
+!bin/darwin/
+!bin/windows/
+bin/linux/*
+bin/darwin/*
+bin/windows/*
+!bin/linux/.gitkeep
+!bin/darwin/.gitkeep
+!bin/windows/.gitkeep
 
 # Test binary, build with `go test -c`
 *.test
