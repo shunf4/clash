@@ -19,6 +19,10 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
+const (
+	maxTtlAllowed = 120 // Second
+)
+
 type dnsClient interface {
 	Exchange(m *D.Msg) (msg *D.Msg, err error)
 	ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, err error)
@@ -123,6 +127,12 @@ func (r *Resolver) exchangeWithoutCache(ctx context.Context, m *D.Msg) (msg *D.M
 			}
 
 			msg := result.(*D.Msg)
+
+			for _, ans := range msg.Answer {
+				if ans.Header().Ttl > maxTtlAllowed {
+					ans.Header().Ttl = maxTtlAllowed
+				}
+			}
 
 			putMsgToCache(r.lruCache, q.String(), msg)
 		}()
