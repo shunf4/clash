@@ -124,7 +124,7 @@ func authenticate(request *http.Request, cache *cache.Cache) *http.Response {
 func responseWith(statusCode int) *http.Response {
 	return &http.Response{
 		StatusCode: statusCode,
-		Status:     http.StatusText(statusCode),
+		Status:     http.StatusText(statusCode) + " (From Clash)",
 		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
 		ProtoMinor: 1,
