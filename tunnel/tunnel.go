@@ -14,6 +14,7 @@ import (
 	"github.com/Dreamacro/clash/constant/provider"
 	"github.com/Dreamacro/clash/context"
 	"github.com/Dreamacro/clash/log"
+	"github.com/Dreamacro/clash/transport/socks5"
 	"github.com/Dreamacro/clash/tunnel/statistic"
 )
 
@@ -140,6 +141,21 @@ func preHandleMetadata(metadata *C.Metadata) error {
 			}
 		} else if resolver.IsFakeIP(metadata.DstIP) {
 			return fmt.Errorf("fake DNS record %s missing", metadata.DstIP)
+		}
+	}
+
+	// shunf4 mod: force use IP address for subsequent proxy dialing, if
+	//             hosts specifies the mapping
+	if metadata.AddrType == socks5.AtypDomainName && metadata.Host != "" {
+		if node := resolver.DefaultHosts.Search(metadata.Host); node != nil {
+			fmt.Printf("[shunf4 mod] force using %s instead of %s in subsequent dialings, because of hosts\n", node.Data.(net.IP).String(), metadata.Host)
+			metadata.DstIP = node.Data.(net.IP)
+			metadata.AddrType = C.AtypIPv6
+			to4 := metadata.DstIP.To4()
+			if to4 != nil {
+				metadata.DstIP = to4
+				metadata.AddrType = C.AtypIPv4
+			}
 		}
 	}
 
