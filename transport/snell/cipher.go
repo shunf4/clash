@@ -4,7 +4,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 
-	"github.com/Dreamacro/go-shadowsocks2/shadowaead"
+	"github.com/Dreamacro/clash/transport/shadowsocks/shadowaead"
+
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -20,6 +21,7 @@ func (sc *snellCipher) SaltSize() int { return 16 }
 func (sc *snellCipher) Encrypter(salt []byte) (cipher.AEAD, error) {
 	return sc.makeAEAD(snellKDF(sc.psk, salt, sc.KeySize()))
 }
+
 func (sc *snellCipher) Decrypter(salt []byte) (cipher.AEAD, error) {
 	return sc.makeAEAD(snellKDF(sc.psk, salt, sc.KeySize()))
 }

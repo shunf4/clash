@@ -7,6 +7,7 @@ import (
 
 	"github.com/Dreamacro/clash/adapter/outbound"
 	"github.com/Dreamacro/clash/common/singledo"
+	"github.com/Dreamacro/clash/component/dialer"
 	C "github.com/Dreamacro/clash/constant"
 	"github.com/Dreamacro/clash/constant/provider"
 )
@@ -34,17 +35,17 @@ func (u *URLTest) Now() string {
 }
 
 // DialContext implements C.ProxyAdapter
-func (u *URLTest) DialContext(ctx context.Context, metadata *C.Metadata) (c C.Conn, err error) {
-	c, err = u.fast(true).DialContext(ctx, metadata)
+func (u *URLTest) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (c C.Conn, err error) {
+	c, err = u.fast(true).DialContext(ctx, metadata, u.Base.DialOptions(opts...)...)
 	if err == nil {
 		c.AppendToChains(u)
 	}
 	return c, err
 }
 
-// DialUDP implements C.ProxyAdapter
-func (u *URLTest) DialUDP(metadata *C.Metadata) (C.PacketConn, error) {
-	pc, err := u.fast(true).DialUDP(metadata)
+// ListenPacketContext implements C.ProxyAdapter
+func (u *URLTest) ListenPacketContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.PacketConn, error) {
+	pc, err := u.fast(true).ListenPacketContext(ctx, metadata, u.Base.DialOptions(opts...)...)
 	if err == nil {
 		pc.AppendToChains(u)
 	}
@@ -57,7 +58,7 @@ func (u *URLTest) Unwrap(metadata *C.Metadata) C.Proxy {
 }
 
 func (u *URLTest) proxies(touch bool) []C.Proxy {
-	elm, _, _ := u.single.Do(func() (interface{}, error) {
+	elm, _, _ := u.single.Do(func() (any, error) {
 		return getProvidersProxies(u.providers, touch), nil
 	})
 
@@ -65,7 +66,7 @@ func (u *URLTest) proxies(touch bool) []C.Proxy {
 }
 
 func (u *URLTest) fast(touch bool) C.Proxy {
-	elm, _, _ := u.fastSingle.Do(func() (interface{}, error) {
+	elm, _, shared := u.fastSingle.Do(func() (any, error) {
 		proxies := u.proxies(touch)
 		fast := proxies[0]
 		min := fast.LastDelay()
@@ -94,6 +95,9 @@ func (u *URLTest) fast(touch bool) C.Proxy {
 
 		return u.fastNode, nil
 	})
+	if shared && touch { // a shared fastSingle.Do() may cause providers untouched, so we touch them again
+		touchProviders(u.providers)
+	}
 
 	return elm.(C.Proxy)
 }
@@ -113,33 +117,36 @@ func (u *URLTest) MarshalJSON() ([]byte, error) {
 	for _, proxy := range u.proxies(false) {
 		all = append(all, proxy.Name())
 	}
-	return json.Marshal(map[string]interface{}{
+	return json.Marshal(map[string]any{
 		"type": u.Type().String(),
 		"now":  u.Now(),
 		"all":  all,
 	})
 }
 
-func parseURLTestOption(config map[string]interface{}) []urlTestOption {
+func parseURLTestOption(config map[string]any) []urlTestOption {
 	opts := []urlTestOption{}
 
 	// tolerance
-	if elm, ok := config["tolerance"]; ok {
-		if tolerance, ok := elm.(int); ok {
-			opts = append(opts, urlTestWithTolerance(uint16(tolerance)))
-		}
+	if tolerance, ok := config["tolerance"].(int); ok {
+		opts = append(opts, urlTestWithTolerance(uint16(tolerance)))
 	}
 
 	return opts
 }
 
-func NewURLTest(commonOptions *GroupCommonOption, providers []provider.ProxyProvider, options ...urlTestOption) *URLTest {
+func NewURLTest(option *GroupCommonOption, providers []provider.ProxyProvider, options ...urlTestOption) *URLTest {
 	urlTest := &URLTest{
-		Base:       outbound.NewBase(commonOptions.Name, "", C.URLTest, false),
+		Base: outbound.NewBase(outbound.BaseOption{
+			Name:        option.Name,
+			Type:        C.URLTest,
+			Interface:   option.Interface,
+			RoutingMark: option.RoutingMark,
+		}),
 		single:     singledo.NewSingle(defaultGetProxiesDuration),
 		fastSingle: singledo.NewSingle(time.Second * 10),
 		providers:  providers,
-		disableUDP: commonOptions.DisableUDP,
+		disableUDP: option.DisableUDP,
 	}
 
 	for _, option := range options {

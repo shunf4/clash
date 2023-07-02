@@ -4,6 +4,7 @@ import (
 	"os"
 	P "path"
 	"path/filepath"
+	"strings"
 )
 
 const Name = "clash"
@@ -51,10 +52,26 @@ func (p *path) Resolve(path string) string {
 	return path
 }
 
+// IsSubPath return true if path is a subpath of homedir
+func (p *path) IsSubPath(path string) bool {
+	homedir := p.HomeDir()
+	path = p.Resolve(path)
+	rel, err := filepath.Rel(homedir, path)
+	if err != nil {
+		return false
+	}
+
+	return !strings.Contains(rel, "..")
+}
+
 func (p *path) MMDB() string {
 	return P.Join(p.homeDir, "Country.mmdb")
 }
 
-func (p *path) Cache() string {
+func (p *path) OldCache() string {
 	return P.Join(p.homeDir, ".cache")
+}
+
+func (p *path) Cache() string {
+	return P.Join(p.homeDir, "cache.db")
 }

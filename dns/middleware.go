@@ -8,14 +8,17 @@ import (
 	"github.com/Dreamacro/clash/common/cache"
 	"github.com/Dreamacro/clash/component/fakeip"
 	"github.com/Dreamacro/clash/component/trie"
+	C "github.com/Dreamacro/clash/constant"
 	"github.com/Dreamacro/clash/context"
 	"github.com/Dreamacro/clash/log"
 
 	D "github.com/miekg/dns"
 )
 
-type handler func(ctx *context.DNSContext, r *D.Msg) (*D.Msg, error)
-type middleware func(next handler) handler
+type (
+	handler    func(ctx *context.DNSContext, r *D.Msg) (*D.Msg, error)
+	middleware func(next handler) handler
+)
 
 func withHosts(hosts *trie.DomainTrie) middleware {
 	return func(next handler) handler {
@@ -84,9 +87,15 @@ func withMapping(mapping *cache.LruCache) middleware {
 				case *D.A:
 					ip = a.A
 					ttl = a.Hdr.Ttl
+					if !ip.IsGlobalUnicast() {
+						continue
+					}
 				case *D.AAAA:
 					ip = a.AAAA
 					ttl = a.Hdr.Ttl
+					if !ip.IsGlobalUnicast() {
+						continue
+					}
 				default:
 					continue
 				}
@@ -105,7 +114,7 @@ func withFakeIP(fakePool *fakeip.Pool) middleware {
 			q := r.Question[0]
 
 			host := strings.TrimRight(q.Name, ".")
-			if fakePool.LookupHost(host) {
+			if fakePool.ShouldSkipped(host) {
 				return next(ctx, r)
 			}
 
@@ -176,11 +185,8 @@ func newHandler(resolver *Resolver, mapper *ResolverEnhancer) handler {
 		middlewares = append(middlewares, withHosts(resolver.hosts))
 	}
 
-	if mapper.mode == FAKEIP {
+	if mapper.mode == C.DNSFakeIP {
 		middlewares = append(middlewares, withFakeIP(mapper.fakePool))
-	}
-
-	if mapper.mode != NORMAL {
 		middlewares = append(middlewares, withMapping(mapper.mapping))
 	}
 

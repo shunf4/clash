@@ -49,7 +49,7 @@ func NewUDP(addr string, in chan<- *inbound.PacketAdapter) (*UDPListener, error)
 	}
 	go func() {
 		for {
-			buf := pool.Get(pool.RelayBufferSize)
+			buf := pool.Get(pool.UDPBufferSize)
 			n, remoteAddr, err := l.ReadFrom(buf)
 			if err != nil {
 				pool.Put(buf)
@@ -79,7 +79,7 @@ func handleSocksUDP(pc net.PacketConn, in chan<- *inbound.PacketAdapter, buf []b
 		bufRef:  buf,
 	}
 	select {
-	case in <- inbound.NewPacket(target, packet, C.SOCKS5):
+	case in <- inbound.NewPacket(target, pc.LocalAddr(), packet, C.SOCKS5):
 	default:
 	}
 }

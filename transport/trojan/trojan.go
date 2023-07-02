@@ -1,7 +1,7 @@
 package trojan
 
 import (
-	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/binary"
@@ -9,9 +9,14 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"sync"
 
+	C "github.com/Dreamacro/clash/constant"
 	"github.com/Dreamacro/clash/transport/socks5"
+	"github.com/Dreamacro/clash/transport/vmess"
+
+	"github.com/Dreamacro/protobytes"
 )
 
 const (
@@ -20,10 +25,10 @@ const (
 )
 
 var (
-	defaultALPN = []string{"h2", "http/1.1"}
-	crlf        = []byte{'\r', '\n'}
+	defaultALPN          = []string{"h2", "http/1.1"}
+	defaultWebsocketALPN = []string{"http/1.1"}
 
-	bufPool = sync.Pool{New: func() interface{} { return &bytes.Buffer{} }}
+	crlf = []byte{'\r', '\n'}
 )
 
 type Command = byte
@@ -38,6 +43,13 @@ type Option struct {
 	ALPN           []string
 	ServerName     string
 	SkipCertVerify bool
+}
+
+type WebsocketOption struct {
+	Host    string
+	Port    string
+	Path    string
+	Headers http.Header
 }
 
 type Trojan struct {
@@ -59,24 +71,48 @@ func (t *Trojan) StreamConn(conn net.Conn) (net.Conn, error) {
 	}
 
 	tlsConn := tls.Client(conn, tlsConfig)
-	if err := tlsConn.Handshake(); err != nil {
+
+	// fix tls handshake not timeout
+	ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTLSTimeout)
+	defer cancel()
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		return nil, err
 	}
 
 	return tlsConn, nil
 }
 
+func (t *Trojan) StreamWebsocketConn(conn net.Conn, wsOptions *WebsocketOption) (net.Conn, error) {
+	alpn := defaultWebsocketALPN
+	if len(t.option.ALPN) != 0 {
+		alpn = t.option.ALPN
+	}
+
+	tlsConfig := &tls.Config{
+		NextProtos:         alpn,
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: t.option.SkipCertVerify,
+		ServerName:         t.option.ServerName,
+	}
+
+	return vmess.StreamWebsocketConn(conn, &vmess.WebsocketConfig{
+		Host:      wsOptions.Host,
+		Port:      wsOptions.Port,
+		Path:      wsOptions.Path,
+		Headers:   wsOptions.Headers,
+		TLS:       true,
+		TLSConfig: tlsConfig,
+	})
+}
+
 func (t *Trojan) WriteHeader(w io.Writer, command Command, socks5Addr []byte) error {
-	buf := bufPool.Get().(*bytes.Buffer)
-	defer bufPool.Put(buf)
-	defer buf.Reset()
+	buf := protobytes.BytesWriter{}
+	buf.PutSlice(t.hexPassword)
+	buf.PutSlice(crlf)
 
-	buf.Write(t.hexPassword)
-	buf.Write(crlf)
-
-	buf.WriteByte(command)
-	buf.Write(socks5Addr)
-	buf.Write(crlf)
+	buf.PutUint8(command)
+	buf.PutSlice(socks5Addr)
+	buf.PutSlice(crlf)
 
 	_, err := w.Write(buf.Bytes())
 	return err
@@ -89,15 +125,11 @@ func (t *Trojan) PacketConn(conn net.Conn) net.PacketConn {
 }
 
 func writePacket(w io.Writer, socks5Addr, payload []byte) (int, error) {
-	buf := bufPool.Get().(*bytes.Buffer)
-	defer bufPool.Put(buf)
-	defer buf.Reset()
-
-	buf.Write(socks5Addr)
-	binary.Write(buf, binary.BigEndian, uint16(len(payload)))
-	buf.Write(crlf)
-	buf.Write(payload)
-
+	buf := protobytes.BytesWriter{}
+	buf.PutSlice(socks5Addr)
+	buf.PutUint16be(uint16(len(payload)))
+	buf.PutSlice(crlf)
+	buf.PutSlice(payload)
 	return w.Write(buf.Bytes())
 }
 
@@ -134,6 +166,9 @@ func ReadPacket(r io.Reader, payload []byte) (net.Addr, int, int, error) {
 		return nil, 0, 0, errors.New("read addr error")
 	}
 	uAddr := addr.UDPAddr()
+	if uAddr == nil {
+		return nil, 0, 0, errors.New("parse addr error")
+	}
 
 	if _, err = io.ReadFull(r, payload[:2]); err != nil {
 		return nil, 0, 0, errors.New("read length error")

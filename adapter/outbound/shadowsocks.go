@@ -10,11 +10,10 @@ import (
 	"github.com/Dreamacro/clash/common/structure"
 	"github.com/Dreamacro/clash/component/dialer"
 	C "github.com/Dreamacro/clash/constant"
+	"github.com/Dreamacro/clash/transport/shadowsocks/core"
 	obfs "github.com/Dreamacro/clash/transport/simple-obfs"
 	"github.com/Dreamacro/clash/transport/socks5"
 	v2rayObfs "github.com/Dreamacro/clash/transport/v2ray-plugin"
-
-	"github.com/Dreamacro/go-shadowsocks2/core"
 )
 
 type ShadowSocks struct {
@@ -28,14 +27,15 @@ type ShadowSocks struct {
 }
 
 type ShadowSocksOption struct {
-	Name       string                 `proxy:"name"`
-	Server     string                 `proxy:"server"`
-	Port       int                    `proxy:"port"`
-	Password   string                 `proxy:"password"`
-	Cipher     string                 `proxy:"cipher"`
-	UDP        bool                   `proxy:"udp,omitempty"`
-	Plugin     string                 `proxy:"plugin,omitempty"`
-	PluginOpts map[string]interface{} `proxy:"plugin-opts,omitempty"`
+	BasicOption
+	Name       string         `proxy:"name"`
+	Server     string         `proxy:"server"`
+	Port       int            `proxy:"port"`
+	Password   string         `proxy:"password"`
+	Cipher     string         `proxy:"cipher"`
+	UDP        bool           `proxy:"udp,omitempty"`
+	Plugin     string         `proxy:"plugin,omitempty"`
+	PluginOpts map[string]any `proxy:"plugin-opts,omitempty"`
 }
 
 type simpleObfsOption struct {
@@ -74,22 +74,24 @@ func (ss *ShadowSocks) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, e
 }
 
 // DialContext implements C.ProxyAdapter
-func (ss *ShadowSocks) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
-	c, err := dialer.DialContext(ctx, "tcp", ss.addr)
+func (ss *ShadowSocks) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (_ C.Conn, err error) {
+	c, err := dialer.DialContext(ctx, "tcp", ss.addr, ss.Base.DialOptions(opts...)...)
 	if err != nil {
 		return nil, fmt.Errorf("%s connect error: %w", ss.addr, err)
 	}
 	tcpKeepAlive(c)
 
-	defer safeConnClose(c, err)
+	defer func(c net.Conn) {
+		safeConnClose(c, err)
+	}(c)
 
 	c, err = ss.StreamConn(c, metadata)
 	return NewConn(c, ss), err
 }
 
-// DialUDP implements C.ProxyAdapter
-func (ss *ShadowSocks) DialUDP(metadata *C.Metadata) (C.PacketConn, error) {
-	pc, err := dialer.ListenPacket(context.Background(), "udp", "")
+// ListenPacketContext implements C.ProxyAdapter
+func (ss *ShadowSocks) ListenPacketContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.PacketConn, error) {
+	pc, err := dialer.ListenPacket(ctx, "udp", "", ss.Base.DialOptions(opts...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -154,10 +156,12 @@ func NewShadowSocks(option ShadowSocksOption) (*ShadowSocks, error) {
 
 	return &ShadowSocks{
 		Base: &Base{
-			name: option.Name,
-			addr: addr,
-			tp:   C.Shadowsocks,
-			udp:  option.UDP,
+			name:  option.Name,
+			addr:  addr,
+			tp:    C.Shadowsocks,
+			udp:   option.UDP,
+			iface: option.Interface,
+			rmark: option.RoutingMark,
 		},
 		cipher: ciph,
 

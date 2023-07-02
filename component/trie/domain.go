@@ -12,10 +12,8 @@ const (
 	domainStep      = "."
 )
 
-var (
-	// ErrInvalidDomain means insert domain is invalid
-	ErrInvalidDomain = errors.New("invalid domain")
-)
+// ErrInvalidDomain means insert domain is invalid
+var ErrInvalidDomain = errors.New("invalid domain")
 
 // DomainTrie contains the main logic for adding and searching nodes for domain segments.
 // support wildcard domain (e.g *.google.com)
@@ -53,7 +51,7 @@ func ValidAndSplitDomain(domain string) ([]string, bool) {
 // 3. subdomain.*.example.com
 // 4. .example.com
 // 5. +.example.com
-func (t *DomainTrie) Insert(domain string, data interface{}) error {
+func (t *DomainTrie) Insert(domain string, data any) error {
 	parts, valid := ValidAndSplitDomain(domain)
 	if !valid {
 		return ErrInvalidDomain
@@ -70,7 +68,7 @@ func (t *DomainTrie) Insert(domain string, data interface{}) error {
 	return nil
 }
 
-func (t *DomainTrie) insert(parts []string, data interface{}) {
+func (t *DomainTrie) insert(parts []string, data any) {
 	node := t.root
 	// reverse storage domain part to save space
 	for i := len(parts) - 1; i >= 0; i-- {
@@ -111,13 +109,13 @@ func (t *DomainTrie) search(node *Node, parts []string) *Node {
 	}
 
 	if c := node.getChild(parts[len(parts)-1]); c != nil {
-		if n := t.search(c, parts[:len(parts)-1]); n != nil {
+		if n := t.search(c, parts[:len(parts)-1]); n != nil && n.Data != nil {
 			return n
 		}
 	}
 
 	if c := node.getChild(wildcard); c != nil {
-		if n := t.search(c, parts[:len(parts)-1]); n != nil {
+		if n := t.search(c, parts[:len(parts)-1]); n != nil && n.Data != nil {
 			return n
 		}
 	}

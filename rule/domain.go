@@ -16,9 +16,6 @@ func (d *Domain) RuleType() C.RuleType {
 }
 
 func (d *Domain) Match(metadata *C.Metadata) bool {
-	if metadata.AddrType != C.AtypDomainName {
-		return false
-	}
 	return metadata.Host == d.domain
 }
 
@@ -31,6 +28,10 @@ func (d *Domain) Payload() string {
 }
 
 func (d *Domain) ShouldResolveIP() bool {
+	return false
+}
+
+func (d *Domain) ShouldFindProcess() bool {
 	return false
 }
 

@@ -8,12 +8,11 @@ import (
 
 	"github.com/Dreamacro/clash/component/dialer"
 	C "github.com/Dreamacro/clash/constant"
+	"github.com/Dreamacro/clash/transport/shadowsocks/core"
+	"github.com/Dreamacro/clash/transport/shadowsocks/shadowaead"
+	"github.com/Dreamacro/clash/transport/shadowsocks/shadowstream"
 	"github.com/Dreamacro/clash/transport/ssr/obfs"
 	"github.com/Dreamacro/clash/transport/ssr/protocol"
-
-	"github.com/Dreamacro/go-shadowsocks2/core"
-	"github.com/Dreamacro/go-shadowsocks2/shadowaead"
-	"github.com/Dreamacro/go-shadowsocks2/shadowstream"
 )
 
 type ShadowSocksR struct {
@@ -24,6 +23,7 @@ type ShadowSocksR struct {
 }
 
 type ShadowSocksROption struct {
+	BasicOption
 	Name          string `proxy:"name"`
 	Server        string `proxy:"server"`
 	Port          int    `proxy:"port"`
@@ -59,22 +59,24 @@ func (ssr *ShadowSocksR) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn,
 }
 
 // DialContext implements C.ProxyAdapter
-func (ssr *ShadowSocksR) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
-	c, err := dialer.DialContext(ctx, "tcp", ssr.addr)
+func (ssr *ShadowSocksR) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (_ C.Conn, err error) {
+	c, err := dialer.DialContext(ctx, "tcp", ssr.addr, ssr.Base.DialOptions(opts...)...)
 	if err != nil {
 		return nil, fmt.Errorf("%s connect error: %w", ssr.addr, err)
 	}
 	tcpKeepAlive(c)
 
-	defer safeConnClose(c, err)
+	defer func(c net.Conn) {
+		safeConnClose(c, err)
+	}(c)
 
 	c, err = ssr.StreamConn(c, metadata)
 	return NewConn(c, ssr), err
 }
 
-// DialUDP implements C.ProxyAdapter
-func (ssr *ShadowSocksR) DialUDP(metadata *C.Metadata) (C.PacketConn, error) {
-	pc, err := dialer.ListenPacket(context.Background(), "udp", "")
+// ListenPacketContext implements C.ProxyAdapter
+func (ssr *ShadowSocksR) ListenPacketContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.PacketConn, error) {
+	pc, err := dialer.ListenPacket(ctx, "udp", "", ssr.Base.DialOptions(opts...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +93,12 @@ func (ssr *ShadowSocksR) DialUDP(metadata *C.Metadata) (C.PacketConn, error) {
 }
 
 func NewShadowSocksR(option ShadowSocksROption) (*ShadowSocksR, error) {
+	// SSR protocol compatibility
+	// https://github.com/Dreamacro/clash/pull/2056
+	if option.Cipher == "none" {
+		option.Cipher = "dummy"
+	}
+
 	addr := net.JoinHostPort(option.Server, strconv.Itoa(option.Port))
 	cipher := option.Cipher
 	password := option.Password
@@ -102,13 +110,14 @@ func NewShadowSocksR(option ShadowSocksROption) (*ShadowSocksR, error) {
 		ivSize int
 		key    []byte
 	)
+
 	if option.Cipher == "dummy" {
 		ivSize = 0
 		key = core.Kdf(option.Password, 16)
 	} else {
 		ciph, ok := coreCiph.(*core.StreamCipher)
 		if !ok {
-			return nil, fmt.Errorf("%s is not dummy or a supported stream cipher in ssr", cipher)
+			return nil, fmt.Errorf("%s is not none or a supported stream cipher in ssr", cipher)
 		}
 		ivSize = ciph.IVSize()
 		key = ciph.Key
@@ -136,10 +145,12 @@ func NewShadowSocksR(option ShadowSocksROption) (*ShadowSocksR, error) {
 
 	return &ShadowSocksR{
 		Base: &Base{
-			name: option.Name,
-			addr: addr,
-			tp:   C.ShadowsocksR,
-			udp:  option.UDP,
+			name:  option.Name,
+			addr:  addr,
+			tp:    C.ShadowsocksR,
+			udp:   option.UDP,
+			iface: option.Interface,
+			rmark: option.RoutingMark,
 		},
 		cipher:   coreCiph,
 		obfs:     obfs,

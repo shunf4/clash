@@ -8,14 +8,12 @@ import (
 
 type TunnelMode int
 
-var (
-	// ModeMapping is a mapping for Mode enum
-	ModeMapping = map[string]TunnelMode{
-		Global.String(): Global,
-		Rule.String():   Rule,
-		Direct.String(): Direct,
-	}
-)
+// ModeMapping is a mapping for Mode enum
+var ModeMapping = map[string]TunnelMode{
+	Global.String(): Global,
+	Rule.String():   Rule,
+	Direct.String(): Direct,
+}
 
 const (
 	Global TunnelMode = iota
@@ -36,7 +34,7 @@ func (m *TunnelMode) UnmarshalJSON(data []byte) error {
 }
 
 // UnmarshalYAML unserialize Mode with yaml
-func (m *TunnelMode) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (m *TunnelMode) UnmarshalYAML(unmarshal func(any) error) error {
 	var tp string
 	unmarshal(&tp)
 	mode, exist := ModeMapping[strings.ToLower(tp)]
@@ -53,7 +51,7 @@ func (m TunnelMode) MarshalJSON() ([]byte, error) {
 }
 
 // MarshalYAML serialize TunnelMode with yaml
-func (m TunnelMode) MarshalYAML() (interface{}, error) {
+func (m TunnelMode) MarshalYAML() (any, error) {
 	return m.String(), nil
 }
 

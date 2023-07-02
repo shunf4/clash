@@ -12,6 +12,7 @@ import (
 
 var (
 	errVehicleType = errors.New("unsupport vehicle type")
+	errSubPath     = errors.New("path is not subpath of home directory")
 )
 
 type healthCheckSchema struct {
@@ -26,10 +27,11 @@ type proxyProviderSchema struct {
 	Path        string            `provider:"path"`
 	URL         string            `provider:"url,omitempty"`
 	Interval    int               `provider:"interval,omitempty"`
+	Filter      string            `provider:"filter,omitempty"`
 	HealthCheck healthCheckSchema `provider:"health-check,omitempty"`
 }
 
-func ParseProxyProvider(name string, mapping map[string]interface{}) (types.ProxyProvider, error) {
+func ParseProxyProvider(name string, mapping map[string]any) (types.ProxyProvider, error) {
 	decoder := structure.NewDecoder(structure.Option{TagName: "provider", WeaklyTypedInput: true})
 
 	schema := &proxyProviderSchema{
@@ -54,11 +56,15 @@ func ParseProxyProvider(name string, mapping map[string]interface{}) (types.Prox
 	case "file":
 		vehicle = NewFileVehicle(path)
 	case "http":
+		if !C.Path.IsSubPath(path) {
+			return nil, fmt.Errorf("%w: %s", errSubPath, path)
+		}
 		vehicle = NewHTTPVehicle(schema.URL, path)
 	default:
 		return nil, fmt.Errorf("%w: %s", errVehicleType, schema.Type)
 	}
 
 	interval := time.Duration(uint(schema.Interval)) * time.Second
-	return NewProxySetProvider(name, interval, vehicle, hc), nil
+	filter := schema.Filter
+	return NewProxySetProvider(name, interval, filter, vehicle, hc)
 }

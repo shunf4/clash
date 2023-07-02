@@ -11,6 +11,8 @@ const (
 	SrcPort
 	DstPort
 	Process
+	ProcessPath
+	IPSet
 	MATCH
 )
 
@@ -36,6 +38,10 @@ func (rt RuleType) String() string {
 		return "DstPort"
 	case Process:
 		return "Process"
+	case ProcessPath:
+		return "ProcessPath"
+	case IPSet:
+		return "IPSet"
 	case MATCH:
 		return "Match"
 	default:
@@ -49,4 +55,5 @@ type Rule interface {
 	Adapter() string
 	Payload() string
 	ShouldResolveIP() bool
+	ShouldFindProcess() bool
 }
