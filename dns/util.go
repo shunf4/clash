@@ -99,7 +99,7 @@ func transform(servers []NameServer, resolver *Resolver) []dnsClient {
 				ret = append(ret, &localResolveClient{})
 			case "dhcpNameserversClient":
 				ret = append(ret, &cachedNameserversClient{
-					cache:          cache.New(5 * time.Second),
+					cache:          cache.New(cache.WithAge(5)),
 					cacheTimeout:   5 * time.Second,
 					lastNameserver: "",
 					clientName:     s.Addr,
@@ -115,7 +115,7 @@ func transform(servers []NameServer, resolver *Resolver) []dnsClient {
 				})
 			case "gatewaysClient":
 				ret = append(ret, &cachedNameserversClient{
-					cache:          cache.New(5 * time.Second),
+					cache:          cache.New(cache.WithAge(5)),
 					cacheTimeout:   5 * time.Second,
 					lastNameserver: "",
 					clientName:     s.Addr,
