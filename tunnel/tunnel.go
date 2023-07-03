@@ -153,15 +153,17 @@ func preHandleMetadata(metadata *C.Metadata) error {
 	//             hosts specifies the mapping
 	if metadata.AddrType() == socks5.AtypDomainName && metadata.Host != "" {
 		if node := resolver.DefaultHosts.Search(metadata.Host); node != nil {
-			fmt.Printf("[shunf4 mod] force using %s instead of %s in subsequent dialings, because of hosts\n", node.Data.(net.IP).String(), metadata.Host)
-			metadata.DstIP = node.Data.(net.IP)
-			metadata.Host = ""
-			// metadata.AddrType = socks5.AtypIPv6
-			// to4 := metadata.DstIP.To4()
-			// if to4 != nil {
-			// 	metadata.DstIP = to4
-			// 	metadata.AddrType = socks5.AtypIPv4
-			// }
+			if didNode := resolver.HostsDialIPDirectlyTrie.Search(metadata.Host); didNode != nil && didNode.Data.(bool) {
+				fmt.Printf("[shunf4 mod] force using %s instead of %s in subsequent dialings, because of hosts and dial-ip-directly\n", node.Data.(net.IP).String(), metadata.Host)
+				metadata.DstIP = node.Data.(net.IP)
+				metadata.Host = ""
+				// metadata.AddrType = socks5.AtypIPv6
+				// to4 := metadata.DstIP.To4()
+				// if to4 != nil {
+				// 	metadata.DstIP = to4
+				// 	metadata.AddrType = socks5.AtypIPv4
+				// }
+			}
 		}
 	}
 

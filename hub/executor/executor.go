@@ -70,7 +70,7 @@ func ApplyConfig(cfg *config.Config, force bool) {
 	updateUsers(cfg.Users)
 	updateProxies(cfg.Proxies, cfg.Providers)
 	updateRules(cfg.Rules)
-	updateHosts(cfg.Hosts)
+	updateHosts(cfg.Hosts, cfg.HostsDialIPDirectlyTrie)
 	updateProfile(cfg)
 	updateGeneral(cfg.General, force)
 	updateDNS(cfg.DNS)
@@ -148,8 +148,9 @@ func updateDNS(c *config.DNS) {
 	dns.ReCreateServer(c.Listen, r, m)
 }
 
-func updateHosts(tree *trie.DomainTrie) {
+func updateHosts(tree *trie.DomainTrie, dialIPDirectlyTrie *trie.DomainTrie) {
 	resolver.DefaultHosts = tree
+	resolver.HostsDialIPDirectlyTrie = dialIPDirectlyTrie
 }
 
 func updateProxies(proxies map[string]C.Proxy, providers map[string]provider.ProxyProvider) {

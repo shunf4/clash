@@ -94,16 +94,17 @@ type Experimental struct {
 
 // Config is clash config manager
 type Config struct {
-	General      *General
-	DNS          *DNS
-	Experimental *Experimental
-	Hosts        *trie.DomainTrie
-	Profile      *Profile
-	Rules        []C.Rule
-	Users        []auth.AuthUser
-	Proxies      map[string]C.Proxy
-	Providers    map[string]providerTypes.ProxyProvider
-	Tunnels      []Tunnel
+	General                 *General
+	DNS                     *DNS
+	Experimental            *Experimental
+	Hosts                   *trie.DomainTrie
+	HostsDialIPDirectlyTrie *trie.DomainTrie
+	Profile                 *Profile
+	Rules                   []C.Rule
+	Users                   []auth.AuthUser
+	Proxies                 map[string]C.Proxy
+	Providers               map[string]providerTypes.ProxyProvider
+	Tunnels                 []Tunnel
 }
 
 type RawDNS struct {
@@ -289,11 +290,12 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	}
 	config.Rules = rules
 
-	hosts, err := parseHosts(rawCfg)
+	hosts, hostsDialIPDirectlyTrie, err := parseHosts(rawCfg)
 	if err != nil {
 		return nil, err
 	}
 	config.Hosts = hosts
+	config.HostsDialIPDirectlyTrie = hostsDialIPDirectlyTrie
 
 	dnsCfg, err := parseDNS(rawCfg, hosts)
 	if err != nil {
@@ -500,8 +502,10 @@ func parseRules(cfg *RawConfig, proxies map[string]C.Proxy) ([]C.Rule, error) {
 	return rules, nil
 }
 
-func parseHosts(cfg *RawConfig) (*trie.DomainTrie, error) {
+// parseHosts returns a host-ip trie, a host-dialIPDirectly trie, and error.
+func parseHosts(cfg *RawConfig) (*trie.DomainTrie, *trie.DomainTrie, error) {
 	tree := trie.New()
+	dialIPDirectlyTree := trie.New()
 
 	// add default hosts
 	if err := tree.Insert("localhost", net.IP{127, 0, 0, 1}); err != nil {
@@ -510,15 +514,18 @@ func parseHosts(cfg *RawConfig) (*trie.DomainTrie, error) {
 
 	if len(cfg.Hosts) != 0 {
 		for domain, ipStr := range cfg.Hosts {
+			hasDialIPDirectlySuffix := false
+			ipStr, hasDialIPDirectlySuffix = strings.CutSuffix(ipStr, ",dial-ip-directly")
 			ip := net.ParseIP(ipStr)
 			if ip == nil {
-				return nil, fmt.Errorf("%s is not a valid IP", ipStr)
+				return nil, nil, fmt.Errorf("%s is not a valid IP", ipStr)
 			}
 			tree.Insert(domain, ip)
+			dialIPDirectlyTree.Insert(domain, hasDialIPDirectlySuffix)
 		}
 	}
 
-	return tree, nil
+	return tree, dialIPDirectlyTree, nil
 }
 
 func hostWithDefaultPort(host string, defPort string) (string, error) {

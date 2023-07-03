@@ -25,6 +25,9 @@ var (
 	// DefaultHosts aim to resolve hosts
 	DefaultHosts = trie.New()
 
+	// HostsDialIPDirectlyTrie aim to decide whether to call IP directly after applying rules
+	HostsDialIPDirectlyTrie = trie.New()
+
 	// DefaultDNSTimeout defined the default dns request timeout
 	DefaultDNSTimeout = time.Second * 5
 )
