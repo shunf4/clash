@@ -11,6 +11,8 @@ import (
 	"github.com/Dreamacro/clash/adapter/outboundgroup"
 	"github.com/Dreamacro/clash/component/profile/cachefile"
 	C "github.com/Dreamacro/clash/constant"
+	"github.com/Dreamacro/clash/hub/executor"
+	"github.com/Dreamacro/clash/log"
 	"github.com/Dreamacro/clash/tunnel"
 
 	"github.com/go-chi/chi/v5"
@@ -96,7 +98,12 @@ func updateProxy(w http.ResponseWriter, r *http.Request) {
 
 func getProxyDelay(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	url := query.Get("url")
+	// url := query.Get("url")
+	url := executor.DelayTestUrl
+	if url == "" {
+		url = "http://www.googleapis.com/auth/documents"
+	}
+	log.Infoln("proxy delay test url: " + url)
 	timeout, err := strconv.ParseInt(query.Get("timeout"), 10, 16)
 	if err != nil {
 		render.Status(r, http.StatusBadRequest)

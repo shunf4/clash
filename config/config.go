@@ -31,11 +31,12 @@ import (
 type General struct {
 	Inbound
 	Controller
-	Mode        T.TunnelMode `json:"mode"`
-	LogLevel    log.LogLevel `json:"log-level"`
-	IPv6        bool         `json:"ipv6"`
-	Interface   string       `json:"-"`
-	RoutingMark int          `json:"-"`
+	Mode         T.TunnelMode `json:"mode"`
+	LogLevel     log.LogLevel `json:"log-level"`
+	DelayTestUrl string       `json:"delay-test-url"`
+	IPv6         bool         `json:"ipv6"`
+	Interface    string       `json:"-"`
+	RoutingMark  int          `json:"-"`
 }
 
 // Inbound
@@ -199,6 +200,7 @@ type RawConfig struct {
 	BindAddress        string       `yaml:"bind-address"`
 	Mode               T.TunnelMode `yaml:"mode"`
 	LogLevel           log.LogLevel `yaml:"log-level"`
+	DelayTestUrl       string       `yaml:"delay-test-url"`
 	IPv6               bool         `yaml:"ipv6"`
 	ExternalController string       `yaml:"external-controller"`
 	ExternalUI         string       `yaml:"external-ui"`
@@ -235,6 +237,7 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 		Mode:           T.Rule,
 		Authentication: []string{},
 		LogLevel:       log.INFO,
+		DelayTestUrl:   "",
 		Hosts:          map[string]string{},
 		Rule:           []string{},
 		Proxy:          []map[string]any{},
@@ -343,11 +346,12 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 			ExternalUI:         cfg.ExternalUI,
 			Secret:             cfg.Secret,
 		},
-		Mode:        cfg.Mode,
-		LogLevel:    cfg.LogLevel,
-		IPv6:        cfg.IPv6,
-		Interface:   cfg.Interface,
-		RoutingMark: cfg.RoutingMark,
+		Mode:         cfg.Mode,
+		LogLevel:     cfg.LogLevel,
+		DelayTestUrl: cfg.DelayTestUrl,
+		IPv6:         cfg.IPv6,
+		Interface:    cfg.Interface,
+		RoutingMark:  cfg.RoutingMark,
 	}, nil
 }
 
