@@ -677,6 +677,7 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 		UnifiedDelay:            cfg.UnifiedDelay,
 		Mode:                    cfg.Mode,
 		LogLevel:                cfg.LogLevel,
+		DelayTestUrl: cfg.DelayTestUrl,
 		IPv6:                    cfg.IPv6,
 		Interface:               cfg.Interface,
 		RoutingMark:             cfg.RoutingMark,
