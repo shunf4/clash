@@ -1026,6 +1026,24 @@ func hostWithDefaultPort(host string, defPort string) (string, error) {
 	return net.JoinHostPort(hostname, port), nil
 }
 
+func batchAddNameservers(nameservers []dns.NameServer, toBeAdded []string, logPrefix string) ([]dns.NameServer, error) {
+	for _, n := range toBeAdded {
+		addr, err := hostWithDefaultPort(n, "53")
+		if err != nil {
+			return nil, fmt.Errorf("%s: DNS Nameserver(%s) format error: %s", logPrefix, n, err.Error())
+		}
+		log.Infoln("%s: Added DNS Nameserver to built-in DNS: %s", logPrefix, addr)
+		nameservers = append(
+			nameservers,
+			dns.NameServer{
+				Net:  "", // UDP
+				Addr: addr,
+			},
+		)
+	}
+	return nameservers, nil
+}
+
 func parseNameServer(servers []string, preferH3 bool) ([]dns.NameServer, error) {
 	var nameservers []dns.NameServer
 
@@ -1075,6 +1093,48 @@ func parseNameServer(servers []string, preferH3 bool) ([]dns.NameServer, error) 
 		case "dhcp":
 			addr = u.Host
 			dnsNetType = "dhcp" // UDP from DHCP
+		case "special":
+			dnsNetType = "special"
+			switch u.Host {
+			case "dynamic-system-resolve-client":
+				addr = "localResolveClient"
+			case "dynamic-dhcp-nameservers-client":
+				addr = "dhcpNameserversClient"
+			case "dynamic-gateways-client":
+				addr = "gatewaysClient"
+			case "static-system-nameservers-on-clash-start":
+				currSystemNameservers, _, _ := netparam.GetSystemNameservers()
+				if len(currSystemNameservers) == 0 {
+					log.Warnln("%s: No current local DNS server was fetched.", u.Host)
+				}
+				nameservers, err = batchAddNameservers(nameservers, currSystemNameservers, u.Host)
+				if err != nil {
+					return nil, err
+				}
+				continue
+			case "static-dhcp-nameservers-on-clash-start":
+				currDhcpNameservers, _, _ := netparam.GetDhcpNameservers()
+				if len(currDhcpNameservers) == 0 {
+					log.Warnln("%s: No current DHCP DNS server was fetched.", u.Host)
+				}
+				nameservers, err = batchAddNameservers(nameservers, currDhcpNameservers, u.Host)
+				if err != nil {
+					return nil, err
+				}
+				continue
+			case "static-gateways-on-clash-start":
+				currGateways := netparam.GetGateways()
+				if len(currGateways) == 0 {
+					log.Warnln("%s: No current gateway was fetched.", u.Host)
+				}
+				nameservers, err = batchAddNameservers(nameservers, currGateways, u.Host)
+				if err != nil {
+					return nil, err
+				}
+				continue
+			default:
+				return nil, fmt.Errorf("DNS NameServer[%d] special:// bad body: %s", idx, u.Host)
+			}
 		case "quic":
 			addr, err = hostWithDefaultPort(u.Host, "853")
 			dnsNetType = "quic" // DNS over QUIC
