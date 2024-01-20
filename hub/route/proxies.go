@@ -12,6 +12,8 @@ import (
 	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/hub/executor"
+	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel"
 
 	"github.com/go-chi/chi/v5"
@@ -106,6 +108,14 @@ func updateProxy(w http.ResponseWriter, r *http.Request) {
 func getProxyDelay(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	url := query.Get("url")
+	urlInConfig := executor.DelayTestUrl
+	if urlInConfig != "" {
+		url = urlInConfig
+	}
+	if url == "" {
+		url = "http://www.googleapis.com/auth/documents"
+	}
+	log.Infoln("proxy delay test url: " + url)
 	timeout, err := strconv.ParseInt(query.Get("timeout"), 10, 16)
 	if err != nil {
 		render.Status(r, http.StatusBadRequest)

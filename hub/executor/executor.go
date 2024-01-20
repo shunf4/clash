@@ -39,6 +39,7 @@ import (
 )
 
 var mux sync.Mutex
+var DelayTestUrl string
 
 func readConfig(path string) ([]byte, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -382,6 +383,7 @@ func updateTunnels(tunnels []LC.Tunnel) {
 }
 
 func updateGeneral(general *config.General) {
+	DelayTestUrl = general.DelayTestUrl
 	tunnel.SetMode(general.Mode)
 	tunnel.SetFindProcessMode(general.FindProcessMode)
 	resolver.DisableIPv6 = !general.IPv6
