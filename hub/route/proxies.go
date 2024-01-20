@@ -113,7 +113,7 @@ func getProxyDelay(w http.ResponseWriter, r *http.Request) {
 		url = urlInConfig
 	}
 	if url == "" {
-		url = "http://www.googleapis.com/auth/documents"
+		url = "https://www.googleapis.com/auth/documents"
 	}
 	log.Infoln("proxy delay test url: " + url)
 	timeout, err := strconv.ParseInt(query.Get("timeout"), 10, 16)
