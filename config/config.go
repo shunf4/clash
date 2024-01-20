@@ -180,7 +180,7 @@ type Config struct {
 	DNS           *DNS
 	Experimental  *Experimental
 	Hosts         *trie.DomainTrie[resolver.HostValue]
-	HostsDialIPDirectlyTrie         *trie.DomainTrie[resolver.HostValue]
+	HostsDialIPDirectlyTrie         *trie.DomainTrie[bool]
 	Profile       *Profile
 	Rules         []C.Rule
 	SubRules      map[string][]C.Rule
@@ -953,8 +953,11 @@ func parseRules(rulesConfig []string, proxies map[string]C.Proxy, subRules map[s
 	return rules, nil
 }
 
-func parseHosts(cfg *RawConfig) (*trie.DomainTrie[resolver.HostValue], error) {
+// parseHosts returns a host-ip trie, a host-dialIPDirectly trie, and error.
+func parseHosts(cfg *RawConfig) (*trie.DomainTrie[resolver.HostValue], *trie.DomainTrie[bool], error) {
 	tree := trie.New[resolver.HostValue]()
+	dialIPDirectlyTree := trie.New[bool]()
+
 
 	// add default hosts
 	hostValue, _ := resolver.NewHostValueByIPs(
@@ -980,25 +983,32 @@ func parseHosts(cfg *RawConfig) (*trie.DomainTrie[resolver.HostValue], error) {
 					anyValue = ips
 				}
 			}
+			hasDialIPDirectlySuffix := false
+			domain, hasDialIPDirectlySuffix = strings.CutSuffix(domain, ",dial-ip-directly")
+			if str, ok := anyValue.(string); ok {
+				anyValue, hasDialIPDirectlySuffix = strings.CutSuffix(str, ",dial-ip-directly")
+			}
+
 			value, err := resolver.NewHostValue(anyValue)
 			if err != nil {
-				return nil, fmt.Errorf("%s is not a valid value", anyValue)
+				return nil, nil, fmt.Errorf("%s is not a valid value", anyValue)
 			}
 			if value.IsDomain {
 				node := tree.Search(value.Domain)
 				for node != nil && node.Data().IsDomain {
 					if node.Data().Domain == domain {
-						return nil, fmt.Errorf("%s, there is a cycle in domain name mapping", domain)
+						return nil, nil, fmt.Errorf("%s, there is a cycle in domain name mapping", domain)
 					}
 					node = tree.Search(node.Data().Domain)
 				}
 			}
 			_ = tree.Insert(domain, value)
+			_ = dialIPDirectlyTree.Insert(domain, hasDialIPDirectlySuffix)
 		}
 	}
 	tree.Optimize()
 
-	return tree, nil
+	return tree, dialIPDirectlyTree, nil
 }
 
 func hostWithDefaultPort(host string, defPort string) (string, error) {
