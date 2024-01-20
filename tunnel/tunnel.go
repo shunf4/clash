@@ -22,6 +22,7 @@ import (
 	"github.com/metacubex/mihomo/constant/provider"
 	icontext "github.com/metacubex/mihomo/context"
 	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/transport/socks5"
 	"github.com/metacubex/mihomo/tunnel/statistic"
 )
 
@@ -272,6 +273,24 @@ func preHandleMetadata(metadata *C.Metadata) error {
 	} else if node, ok := resolver.DefaultHosts.Search(metadata.Host, true); ok {
 		// try use domain mapping
 		metadata.Host = node.Domain
+	}
+
+	// shunf4 mod: force use IP address for subsequent proxy dialing, if
+	//             hosts specifies the mapping
+	if metadata.AddrType() == socks5.AtypDomainName && metadata.Host != "" {
+		if node, isMatchIsDomain := resolver.DefaultHosts.Search(metadata.Host, false); node != nil && isMatchIsDomain {
+			if didNode := resolver.HostsDialIPDirectlyTrie.Search(metadata.Host); didNode != nil && didNode.Data() && len(node.IPs) > 0 {
+				fmt.Printf("[shunf4 mod] force using %s instead of %s in subsequent dialings, because of hosts and dial-ip-directly\n", node.IPs[0], metadata.Host)
+				metadata.DstIP = node.IPs[0]
+				metadata.Host = ""
+				// metadata.AddrType = socks5.AtypIPv6
+				// to4 := metadata.DstIP.To4()
+				// if to4 != nil {
+				// 	metadata.DstIP = to4
+				// 	metadata.AddrType = socks5.AtypIPv4
+				// }
+			}
+		}
 	}
 
 	return nil
