@@ -7,20 +7,25 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Dreamacro/clash/common/cache"
-	"github.com/Dreamacro/clash/component/dialer"
-	"github.com/Dreamacro/clash/log"
+	"github.com/metacubex/mihomo/common/lru"
+	"github.com/metacubex/mihomo/component/dialer"
+	"github.com/metacubex/mihomo/log"
 	D "github.com/miekg/dns"
 )
 
 type cachedNameserversClient struct {
 	*D.Client
-	cache          *cache.LruCache
+	cache          *lru.LruCache[string, net.IP]
 	lastNameserver string
 	mu             sync.Mutex
 	clientName     string
 	cacheTimeout   time.Duration
 	getNameservers func() (nameservers []string, err error)
+}
+
+// Address implements dnsClient
+func (cnc *cachedNameserversClient) Address() string {
+	return fmt.Sprintf("[dns-cached-ns-list/%s/lastNameserver=%s]", cnc.clientName, cnc.lastNameserver)
 }
 
 func (cnc *cachedNameserversClient) Exchange(m *D.Msg) (msg *D.Msg, err error) {

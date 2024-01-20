@@ -10,6 +10,11 @@ import (
 type localResolveClient struct {
 }
 
+// Address implements dnsClient
+func (lrc *localResolveClient) Address() string {
+	return "[special-dns-localresolve]"
+}
+
 func (lrc *localResolveClient) Exchange(m *D.Msg) (msg *D.Msg, err error) {
 	return lrc.ExchangeContext(context.Background(), m)
 }

@@ -11,12 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/metacubex/mihomo/common/lru"
 	N "github.com/metacubex/mihomo/common/net"
 	"github.com/metacubex/mihomo/common/nnip"
 	"github.com/metacubex/mihomo/common/picker"
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/dns/netparam"
 	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel"
 
@@ -116,6 +118,49 @@ func transform(servers []NameServer, resolver *Resolver) []dnsClient {
 				ret = append(ret, doq)
 			} else {
 				log.Fatalln("DoQ format error: %v", err)
+			}
+			continue
+		}
+
+		if s.Net == "special" {
+			switch s.Addr {
+			case "localResolveClient":
+				ret = append(ret, &localResolveClient{})
+			case "dhcpNameserversClient":
+				ret = append(ret, &cachedNameserversClient{
+					cache:          lru.New[string, net.IP](lru.WithAge[string, net.IP](5)),
+					cacheTimeout:   5 * time.Second,
+					lastNameserver: "",
+					clientName:     s.Addr,
+					getNameservers: func() (nameservers []string, err error) {
+						nameservers, _, _ = netparam.GetDhcpNameservers()
+						return
+					},
+					Client: &D.Client{
+						Net:     "udp",
+						UDPSize: 4096,
+						Timeout: 5 * time.Second,
+					},
+				})
+			case "gatewaysClient":
+				ret = append(ret, &cachedNameserversClient{
+					cache:          lru.New[string, net.IP](lru.WithAge[string, net.IP](5)),
+					cacheTimeout:   5 * time.Second,
+					lastNameserver: "",
+					clientName:     s.Addr,
+					getNameservers: func() (nameservers []string, err error) {
+						nameservers = netparam.GetGateways()
+						return
+					},
+					Client: &D.Client{
+						Net:     "udp",
+						UDPSize: 4096,
+						Timeout: 5 * time.Second,
+					},
+				})
+			default:
+				// It should not happen
+				log.Warnln("DNS special:// bad body: %s", s.Addr)
 			}
 			continue
 		}
