@@ -6,6 +6,19 @@
 *.dylib
 bin/*
 
+!bin/linux/
+!bin/darwin/
+!bin/windows/
+!bin/linux-arm64/
+bin/linux/*
+bin/darwin/*
+bin/windows/*
+bin/linux-arm64/*
+!bin/linux/.gitkeep
+!bin/darwin/.gitkeep
+!bin/windows/.gitkeep
+!bin/linux-arm64/.gitkeep
+
 # Test binary, build with `go test -c`
 *.test
 

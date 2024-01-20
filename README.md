@@ -3,7 +3,7 @@
   <br>Meta Kernel<br>
 </h1>
 
-<h3 align="center">Another Mihomo Kernel.</h3>
+<h3 align="center">Another Mihomo Kernel. [shunf4 fork]</h3>
 
 <p align="center">
   <a href="https://goreportcard.com/report/github.com/MetaCubeX/mihomo">
