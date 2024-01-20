@@ -6,11 +6,12 @@ package netparam
 import (
 	"bufio"
 	"encoding/binary"
-	"github.com/Dreamacro/clash/log"
 	"net"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/metacubex/mihomo/log"
 )
 
 func GetDhcpNameservers() (nameservers []string, domain string, searchs []string) {
