@@ -31,7 +31,7 @@ var (
 	DefaultHosts = NewHosts(trie.New[HostValue]())
 
 	// HostsDialIPDirectlyTrie aim to decide whether to call IP directly after applying rules
-	HostsDialIPDirectlyTrie = trie.New[HostValue]()
+	HostsDialIPDirectlyTrie = trie.New[bool]()
 
 	// DefaultDNSTimeout defined the default dns request timeout
 	DefaultDNSTimeout = time.Second * 5

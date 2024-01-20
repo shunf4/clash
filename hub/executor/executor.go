@@ -94,7 +94,7 @@ func ApplyConfig(cfg *config.Config, force bool) {
 	updateProxies(cfg.Proxies, cfg.Providers)
 	updateRules(cfg.Rules, cfg.SubRules, cfg.RuleProviders)
 	updateSniffer(cfg.Sniffer)
-	updateHosts(cfg.Hosts)
+	updateHosts(cfg.Hosts, cfg.HostsDialIPDirectlyTrie)
 	updateGeneral(cfg.General)
 	updateNTP(cfg.NTP)
 	updateDNS(cfg.DNS, cfg.RuleProviders, cfg.General.IPv6)
@@ -257,8 +257,9 @@ func updateDNS(c *config.DNS, ruleProvider map[string]provider.RuleProvider, gen
 	dns.ReCreateServer(c.Listen, r, m)
 }
 
-func updateHosts(tree *trie.DomainTrie[resolver.HostValue]) {
+func updateHosts(tree *trie.DomainTrie[resolver.HostValue], dialIPDirectlyTrie *trie.DomainTrie[bool]) {
 	resolver.DefaultHosts = resolver.NewHosts(tree)
+	resolver.HostsDialIPDirectlyTrie = dialIPDirectlyTrie
 }
 
 func updateProxies(proxies map[string]C.Proxy, providers map[string]provider.ProxyProvider) {
