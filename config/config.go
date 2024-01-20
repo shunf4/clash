@@ -180,6 +180,7 @@ type Config struct {
 	DNS           *DNS
 	Experimental  *Experimental
 	Hosts         *trie.DomainTrie[resolver.HostValue]
+	HostsDialIPDirectlyTrie         *trie.DomainTrie[resolver.HostValue]
 	Profile       *Profile
 	Rules         []C.Rule
 	SubRules      map[string][]C.Rule
