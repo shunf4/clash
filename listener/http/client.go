@@ -17,9 +17,10 @@ func newClient(srcConn net.Conn, tunnel C.Tunnel, additions ...inbound.Addition)
 		Transport: &http.Transport{
 			// from http.DefaultTransport
 			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
+			IdleConnTimeout:       0,
 			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
+			ResponseHeaderTimeout: 0,
+			ExpectContinueTimeout: 0,
 			DialContext: func(context context.Context, network, address string) (net.Conn, error) {
 				if network != "tcp" && network != "tcp4" && network != "tcp6" {
 					return nil, errors.New("unsupported network " + network)

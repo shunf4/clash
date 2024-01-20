@@ -162,7 +162,7 @@ func authenticate(request *http.Request, cache *lru.LruCache[string, bool]) *htt
 func responseWith(request *http.Request, statusCode int) *http.Response {
 	return &http.Response{
 		StatusCode: statusCode,
-		Status:     http.StatusText(statusCode),
+		Status:     http.StatusText(statusCode) + " (From Clash)",
 		Proto:      request.Proto,
 		ProtoMajor: request.ProtoMajor,
 		ProtoMinor: request.ProtoMinor,
