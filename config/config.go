@@ -563,11 +563,12 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	}
 	config.Rules = rules
 
-	hosts, err := parseHosts(rawCfg)
+	hosts, hostsDialIPDirectlyTrie, err := parseHosts(rawCfg)
 	if err != nil {
 		return nil, err
 	}
 	config.Hosts = hosts
+	config.HostsDialIPDirectlyTrie = hostsDialIPDirectlyTrie
 
 	ntpCfg := paresNTP(rawCfg)
 	config.NTP = ntpCfg
