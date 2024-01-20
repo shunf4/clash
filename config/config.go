@@ -33,6 +33,7 @@ import (
 	providerTypes "github.com/metacubex/mihomo/constant/provider"
 	snifferTypes "github.com/metacubex/mihomo/constant/sniffer"
 	"github.com/metacubex/mihomo/dns"
+	"github.com/metacubex/mihomo/dns/netparam"
 	L "github.com/metacubex/mihomo/listener"
 	LC "github.com/metacubex/mihomo/listener/config"
 	"github.com/metacubex/mihomo/log"
@@ -51,6 +52,7 @@ type General struct {
 	Mode                    T.TunnelMode `json:"mode"`
 	UnifiedDelay            bool
 	LogLevel                log.LogLevel      `json:"log-level"`
+	DelayTestUrl            string            `json:"delay-test-url"`
 	IPv6                    bool              `json:"ipv6"`
 	Interface               string            `json:"interface-name"`
 	RoutingMark             int               `json:"-"`
