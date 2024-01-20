@@ -302,6 +302,7 @@ type RawConfig struct {
 	Mode                    T.TunnelMode      `yaml:"mode" json:"mode"`
 	UnifiedDelay            bool              `yaml:"unified-delay" json:"unified-delay"`
 	LogLevel                log.LogLevel      `yaml:"log-level" json:"log-level"`
+	DelayTestUrl       string       `yaml:"delay-test-url"`
 	IPv6                    bool              `yaml:"ipv6" json:"ipv6"`
 	ExternalController      string            `yaml:"external-controller"`
 	ExternalControllerTLS   string            `yaml:"external-controller-tls"`
@@ -406,6 +407,7 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 		UnifiedDelay:      false,
 		Authentication:    []string{},
 		LogLevel:          log.INFO,
+		DelayTestUrl:   "",
 		Hosts:             map[string]any{},
 		Rule:              []string{},
 		Proxy:             []map[string]any{},
