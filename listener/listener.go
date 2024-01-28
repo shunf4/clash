@@ -2,12 +2,13 @@ package listener
 
 import (
 	"fmt"
-	"golang.org/x/exp/slices"
 	"net"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+
+	"golang.org/x/exp/slices"
 
 	"github.com/metacubex/mihomo/component/ebpf"
 	C "github.com/metacubex/mihomo/constant"

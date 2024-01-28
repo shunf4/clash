@@ -1,0 +1,28 @@
+port: 25214
+mode: rule
+geox-url:
+  geoip: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
+  geosite: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat"
+  mmdb: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.metadb"
+geo-auto-update: true
+
+log-level: debug
+external-controller: 127.0.0.1:9093
+
+keep-alive-interval: 15
+
+hosts:
+  'myintrasrvexposed.home.arpa': '127.0.111.111'
+
+profile:
+  store-selected: true
+
+dns:
+  nameserver:
+    - '119.29.29.29'
+
+proxies:
+  - name: Localhost-Mitm-Relay
+    type: socks5
+    server: localhost
+    port: 1089
