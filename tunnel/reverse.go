@@ -44,7 +44,7 @@ func RestartReverse(firstStart bool) {
 
 		metadata := &C.Metadata{}
 		metadata.NetWork = C.TCP
-		metadata.Type = C.INNER
+		metadata.Type = C.TUNNEL
 		metadata.DNSMode = C.DNSNormal
 		metadata.Process = C.MihomoName
 		metadata.SpecialProxy = "Localhost-Mitm-Relay"
@@ -134,7 +134,26 @@ func muxServerGetSession(w *MuxServerWorker, sessionID uint16) (*MuxSession, boo
 	defer w.RUnlock()
 
 	result, found := w.sessions[sessionID]
+	if found {
+		log.Debugln("get session %d", sessionID)
+	} else {
+		log.Debugln("warn: not found session %d", sessionID)
+	}
 	return result, found
+}
+
+func muxServerCloseSession(w *MuxServerWorker, sessionID uint16, s *MuxSession) error {
+	w.RLock()
+	defer w.RUnlock()
+
+	delete(w.sessions, sessionID)
+
+	if c, ok := s.downstreamWriter.(io.Closer); ok {
+		if err := c.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func muxUtilDiscardData(conn net.Conn) error {
@@ -162,11 +181,8 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 
 	switch f.SessionStatus {
 	case SessionStatusKeepAlive:
+		log.Debugln("server worker %p handling SessionStatusKeepAlive", w)
 		// Do nothing than drain data
-		if (f.Option & OptionError) != 0 {
-			log.Warnln("muxServerHandleFrame: received frame.Option has OptionError, aborting")
-			return nil, fmt.Errorf("frame has OptionError")
-		}
 		if (f.Option & OptionData) != 0 {
 			err := muxUtilDiscardData(conn)
 			if err != nil {
@@ -174,16 +190,15 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 				return nil, err
 			}
 		}
+		return f, nil
 	case SessionStatusKeep:
-		if (f.Option & OptionError) != 0 {
-			log.Warnln("muxServerHandleFrame: received frame.Option has OptionError, aborting")
-			return nil, fmt.Errorf("frame has OptionError")
-		}
+		log.Debugln("server worker %p handling SessionStatusKeep", w)
 		if (f.Option & OptionData) == 0 {
 			return f, nil
 		}
 		s, found := muxServerGetSession(w, f.SessionID)
 		if !found {
+			log.Debugln("server worker %p: session %d not found; notify remote side to end this session", w, f.SessionID)
 			// Notify remote peer to close this session.
 			responseBuf := [6]byte{}
 			binary.BigEndian.PutUint16(responseBuf[0:2], uint16(4))
@@ -207,19 +222,19 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 		dataLenRaw := [2]byte{}
 		_, err := conn.Read(dataLenRaw[:])
 		if err != nil {
-			log.Errorln("xxx: reading frame data len: %v", err)
+			log.Errorln("muxServerHandleFrame: reading frame data len: %v", err)
 			return nil, err
 		}
 		dataLen := int(binary.BigEndian.Uint16(dataLenRaw[:]))
 		data := make([]byte, dataLen)
 		_, err = conn.Read(data)
 		if err != nil {
-			log.Errorln("xxx: reading frame data body: %v", err)
+			log.Errorln("muxServerHandleFrame: reading frame data body: %v", err)
 			return nil, err
 		}
 		_, err = s.downstreamWriter.Write(data)
 		if err != nil {
-			log.Errorln("xxx: writing frame data body to downstream: %v", err)
+			log.Errorln("muxServerHandleFrame: writing frame data body to downstream: %v", err)
 
 			// Notify remote peer to close this session.
 			responseBuf := [6]byte{}
@@ -232,7 +247,45 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 			if err != nil {
 				return nil, err
 			}
+
+			muxServerCloseSession(w, f.SessionID, s)
 		}
+		return f, nil
+	case SessionStatusEnd:
+		log.Debugln("server worker %p handling SessionStatusEnd", w)
+		s, found := muxServerGetSession(w, f.SessionID)
+		if found {
+			muxServerCloseSession(w, f.SessionID, s)
+		}
+
+		if (f.Option & OptionData) != 0 {
+			err = muxUtilDiscardData(conn)
+			if err != nil {
+				log.Errorln("muxServerHandleFrame: error when discarding data: %v", err)
+				return nil, err
+			}
+		}
+		return f, nil
+	case SessionStatusNew:
+		log.Debugln("server worker %p handling SessionStatusNew", w)
+		sessionConn1, sessionConn2 := net.Pipe()
+		sessionConnMeta := &C.Metadata{}
+		sessionConnMeta.NetWork = C.TCP
+		sessionConnMeta.Type = C.TUNNEL
+		sessionConnMeta.DNSMode = C.DNSNormal
+		sessionConnMeta.SpecialProxy = "Localhost-Mitm-Relay"
+
+		if h, port, err := net.SplitHostPort(address); err == nil {
+			if port, err := strconv.ParseUint(port, 10, 16); err == nil {
+				sessionConnMeta.DstPort = uint16(port)
+			}
+			if ip, err := netip.ParseAddr(h); err == nil {
+				sessionConnMeta.DstIP = ip
+			} else {
+				sessionConnMeta.Host = h
+			}
+		}
+		Tunnel.HandleTCPConn(sessionConn2)
 	}
 }
 
