@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -11,9 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"errors"
+
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
-	"github.com/pkg/errors"
 )
 
 var (
@@ -40,14 +42,14 @@ func RestartReverse(firstStart bool) {
 		}
 		log.Debugln("(re)start reverse machanism")
 
-		address := "localhost:38684"
+		address := "v2ray-expose-a.home.arpa:0"
 
 		metadata := &C.Metadata{}
 		metadata.NetWork = C.TCP
 		metadata.Type = C.TUNNEL
 		metadata.DNSMode = C.DNSNormal
 		metadata.Process = C.MihomoName
-		metadata.SpecialProxy = "Localhost-Mitm-Relay"
+		metadata.SpecialProxy = "Localhost-Vmess-Relay"
 
 		if h, port, err := net.SplitHostPort(address); err == nil {
 			if port, err := strconv.ParseUint(port, 10, 16); err == nil {
@@ -70,19 +72,23 @@ func RestartReverse(firstStart bool) {
 			}()
 
 			// conn1 is a V2Ray Mux Server Worker connection.
-			_ = conn1
-			sessions := map[uint16]int
+			w := &MuxServerWorker{
+				sessions: make(map[uint16]*MuxSession, 16),
+			}
 
 			for {
 				select {
 				case <-ctx.Done():
+					log.Debugln("reverse: got ctx.Done()")
 					conn1.Close()
 					return
 				default:
-					f, err := muxServerHandleFrame(conn1)
+					_, err := muxServerHandleFrame(w, conn1)
 					if err != nil {
-						if errors.Cause(err) == io.EOF {
+						if errors.Is(err, io.EOF) {
 							log.Warnln("reverse: unexpected EOF in bridge connection, aborting")
+						} else {
+							log.Warnln("reverse: when handling frame: %v", err)
 						}
 						conn1.Close()
 						return
@@ -90,7 +96,6 @@ func RestartReverse(firstStart bool) {
 
 				}
 			}
-
 		}
 	}()
 }
@@ -109,7 +114,7 @@ type FrameMetadata struct {
 	Option        byte
 	SessionStatus SessionStatus
 	NetType       byte
-	TargetIP      net.IP
+	TargetIP      netip.Addr
 	TargetDomain  string
 	TargetPort    uint16
 }
@@ -128,6 +133,13 @@ const (
 	OptionData  = byte(0x01)
 	OptionError = byte(0x02)
 )
+
+func muxServerAddSession(w *MuxServerWorker, sessionID uint16, session *MuxSession) {
+	w.RLock()
+	defer w.RUnlock()
+
+	w.sessions[sessionID] = session
+}
 
 func muxServerGetSession(w *MuxServerWorker, sessionID uint16) (*MuxSession, bool) {
 	w.RLock()
@@ -158,7 +170,7 @@ func muxServerCloseSession(w *MuxServerWorker, sessionID uint16, s *MuxSession) 
 
 func muxUtilDiscardData(conn net.Conn) error {
 	dataLenRaw := [2]byte{}
-	_, err := conn.Read(dataLenRaw[:])
+	_, err := io.ReadFull(conn, dataLenRaw[:])
 	if err != nil {
 		log.Errorln("muxUtilDiscardData: reading frame data len: %v", err)
 		return err
@@ -204,7 +216,7 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 			binary.BigEndian.PutUint16(responseBuf[0:2], uint16(4))
 			binary.BigEndian.PutUint16(responseBuf[2:4], f.SessionID)
 			responseBuf[4] = SessionStatusEnd
-			responseBuf[5] = 0x00 // Option
+			responseBuf[5] = byte(0x00) // Option
 			// net.Pipe() has internal lock
 			_, err := conn.Write(responseBuf[:])
 			if err != nil {
@@ -220,14 +232,14 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 		}
 
 		dataLenRaw := [2]byte{}
-		_, err := conn.Read(dataLenRaw[:])
+		_, err := io.ReadFull(conn, dataLenRaw[:])
 		if err != nil {
 			log.Errorln("muxServerHandleFrame: reading frame data len: %v", err)
 			return nil, err
 		}
 		dataLen := int(binary.BigEndian.Uint16(dataLenRaw[:]))
 		data := make([]byte, dataLen)
-		_, err = conn.Read(data)
+		_, err = io.ReadFull(conn, data)
 		if err != nil {
 			log.Errorln("muxServerHandleFrame: reading frame data body: %v", err)
 			return nil, err
@@ -241,7 +253,7 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 			binary.BigEndian.PutUint16(responseBuf[0:2], uint16(4))
 			binary.BigEndian.PutUint16(responseBuf[2:4], f.SessionID)
 			responseBuf[4] = SessionStatusEnd
-			responseBuf[5] = 0x00 // Option
+			responseBuf[5] = byte(0x00) // Option
 			// net.Pipe() has internal lock
 			_, err := conn.Write(responseBuf[:])
 			if err != nil {
@@ -268,24 +280,152 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 		return f, nil
 	case SessionStatusNew:
 		log.Debugln("server worker %p handling SessionStatusNew", w)
+		// if f.NetType != byte(0x01) {
+		// 	// Non-TCP
+		// 	// Drop silently
+		// 	log.Debugln("server worker %p got a non-tcp connection (%d), sessionID=%d, dropping it", w, f.NetType, f.SessionID)
+		// 	if (f.Option & OptionData) != 0 {
+		// 		err = muxUtilDiscardData(conn)
+		// 		if err != nil {
+		// 			log.Errorln("muxServerHandleFrame: error when discarding data: %v", err)
+		// 			return nil, err
+		// 		}
+		// 	}
+		// 	return f, nil
+		// }
 		sessionConn1, sessionConn2 := net.Pipe()
 		sessionConnMeta := &C.Metadata{}
 		sessionConnMeta.NetWork = C.TCP
 		sessionConnMeta.Type = C.TUNNEL
 		sessionConnMeta.DNSMode = C.DNSNormal
-		sessionConnMeta.SpecialProxy = "Localhost-Mitm-Relay"
+		sessionConnMeta.SpecialRules = "reverse-sub-rule"
+		sessionConnMeta.DstPort = f.TargetPort
+		sessionConnMeta.DstIP = f.TargetIP
+		sessionConnMeta.Host = f.TargetDomain
 
-		if h, port, err := net.SplitHostPort(address); err == nil {
-			if port, err := strconv.ParseUint(port, 10, 16); err == nil {
-				sessionConnMeta.DstPort = uint16(port)
-			}
-			if ip, err := netip.ParseAddr(h); err == nil {
-				sessionConnMeta.DstIP = ip
+		go func() {
+			log.Debugln("reverse: new reverse connection: serverWorker=%p, sessionID=%d, dest= %s / %s : %d", w, f.SessionID, f.TargetDomain, f.TargetIP.String(), f.TargetPort)
+			if f.TargetDomain == "reverse.internal.v2fly.org" {
+				io.Copy(io.Discard, sessionConn2)
 			} else {
-				sessionConnMeta.Host = h
+				Tunnel.HandleTCPConn(sessionConn2, sessionConnMeta)
+			}
+			log.Debugln("reverse: end reverse connection: serverWorker=%p, sessionID=%d, dest= %s / %s : %d", w, f.SessionID, f.TargetDomain, f.TargetIP.String(), f.TargetPort)
+		}()
+
+		s := &MuxSession{
+			downstreamWriter: sessionConn1,
+		}
+
+		muxServerAddSession(w, f.SessionID, s)
+		thisSessionID := f.SessionID
+		go func() {
+			rbuf := [32 * 1024]byte{}
+			wbuf := &bytes.Buffer{}
+			var err error
+			// From io.Copy().
+			for {
+				nr, er := sessionConn1.Read(rbuf[:])
+				if nr > 0 {
+					// outF := FrameMetadata{
+					// 	SessionID: thisSessionID,
+					// 	SessionStatus: SessionStatusKeep,
+					// 	Option: OptionData,
+					// }
+
+					wbuf.Reset()
+					binary.Write(wbuf, binary.BigEndian, uint16(4))
+					binary.Write(wbuf, binary.BigEndian, thisSessionID)
+					wbuf.WriteByte(SessionStatusKeep)
+					wbuf.WriteByte(OptionData)
+					binary.Write(wbuf, binary.BigEndian, uint16(nr))
+					wbuf.Write(rbuf[:nr])
+
+					muxToWrite := wbuf.Bytes()
+
+					nw, ew := conn.Write(muxToWrite)
+					if nw < 0 || len(muxToWrite) < nw {
+						nw = 0
+						if ew == nil {
+							ew = errors.New("invalid write result")
+						}
+					}
+					if ew != nil {
+						err = ew
+						break
+					}
+					if len(muxToWrite) != nw {
+						err = io.ErrShortWrite
+						break
+					}
+				}
+				if er != nil {
+					if er != io.EOF {
+						err = er
+					}
+					break
+				}
+			}
+			if err != nil {
+				log.Warnln("reverse: the serverWorker=%p, sessionID=%d sessionConn -> muxConn copy coroutine stopped because of error: %v", w, thisSessionID, err)
+			} else {
+				log.Debugln("reverse: the serverWorker=%p, sessionID=%d sessionConn -> muxConn copy coroutine stopped without error", w, thisSessionID)
+			}
+
+			// Notify remote peer to close this session.
+			responseBuf := [6]byte{}
+			binary.BigEndian.PutUint16(responseBuf[0:2], uint16(4))
+			binary.BigEndian.PutUint16(responseBuf[2:4], f.SessionID)
+			responseBuf[4] = SessionStatusEnd
+			responseBuf[5] = byte(0x00) // Option
+			// net.Pipe() has internal lock
+			_, err = conn.Write(responseBuf[:])
+			if err != nil {
+				// return nil, err
+				// TODO: report error
+			}
+
+			sessionConn1.Close()
+			muxServerCloseSession(w, thisSessionID, s)
+		}()
+
+		if (f.Option & OptionData) != 0 {
+			dataLenRaw := [2]byte{}
+			_, err := io.ReadFull(conn, dataLenRaw[:])
+			if err != nil {
+				log.Errorln("muxServerHandleFrame: serverWorker=%p, sessionID=%d reading frame data len: %v", w, f.SessionID, err)
+				return nil, err
+			}
+			dataLen := int(binary.BigEndian.Uint16(dataLenRaw[:]))
+			data := make([]byte, dataLen)
+			_, err = io.ReadFull(conn, data)
+			if err != nil {
+				log.Errorln("muxServerHandleFrame: serverWorker=%p, sessionID=%d reading frame data body: %v", w, f.SessionID, err)
+				return nil, err
+			}
+			_, err = s.downstreamWriter.Write(data)
+			if err != nil {
+				log.Errorln("muxServerHandleFrame: serverWorker=%p, sessionID=%d writing frame data body to downstream: %v", w, f.SessionID, err)
+
+				// Notify remote peer to close this session.
+				responseBuf := [6]byte{}
+				binary.BigEndian.PutUint16(responseBuf[0:2], uint16(4))
+				binary.BigEndian.PutUint16(responseBuf[2:4], f.SessionID)
+				responseBuf[4] = SessionStatusEnd
+				responseBuf[5] = byte(0x00) // Option
+				// net.Pipe() has internal lock
+				_, err := conn.Write(responseBuf[:])
+				if err != nil {
+					return nil, err
+				}
+
+				muxServerCloseSession(w, f.SessionID, s)
 			}
 		}
-		Tunnel.HandleTCPConn(sessionConn2)
+
+		return f, nil
+	default:
+		return nil, fmt.Errorf("muxServerHandleFrame: unknown SessionStatus: %d", f.SessionStatus)
 	}
 }
 
@@ -331,17 +471,17 @@ func muxServerUnmarshalFromBuffer(b []byte) (*FrameMetadata, error) {
 		f.TargetPort = binary.BigEndian.Uint16(b[5:7])
 		addrFamily := b[7]
 		switch addrFamily {
-		case 0x00: // net.AddressFamilyIPv4
+		case byte(0x00): // net.AddressFamilyIPv4
 			if len(b) < (8 + net.IPv4len) {
 				return nil, fmt.Errorf("insufficient buffer for ipv4: %d", len(b))
 			}
-			f.TargetIP = net.IP(b[8 : 8+net.IPv4len])
-		case 0x01: // net.AddressFamilyIPv6
+			f.TargetIP, _ = netip.AddrFromSlice(b[8 : 8+net.IPv4len])
+		case byte(0x01): // net.AddressFamilyIPv6
 			if len(b) < (8 + net.IPv6len) {
 				return nil, fmt.Errorf("insufficient buffer for ipv6: %d", len(b))
 			}
-			f.TargetIP = net.IP(b[8 : 8+net.IPv6len])
-		case 0x02: // net.AddressFamilyDomain
+			f.TargetIP, _ = netip.AddrFromSlice(b[8 : 8+net.IPv6len])
+		case byte(0x02): // net.AddressFamilyDomain
 			if len(b) < (8 + 1) {
 				return nil, fmt.Errorf("insufficient buffer for domain name host: %d", len(b))
 			}
