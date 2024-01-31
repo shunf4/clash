@@ -19,12 +19,13 @@ import (
 )
 
 var (
-	reverseCtx       context.Context
-	reverseCtxCancel context.CancelFunc
-	reverseMux       sync.Mutex
+	reverseCtx        context.Context
+	reverseCtxCancel  context.CancelFunc
+	reverseMux        sync.Mutex
+	reverseFirstStart bool
 )
 
-func RestartReverse(firstStart bool) {
+func RestartReverse() {
 	reverseMux.Lock()
 	defer reverseMux.Unlock()
 
@@ -37,8 +38,9 @@ func RestartReverse(firstStart bool) {
 	reverseCtxCancel = cancel
 
 	go func() {
-		if firstStart {
+		if reverseFirstStart {
 			time.Sleep(1 * time.Second)
+			reverseFirstStart = false
 		}
 		log.Debugln("(re)start reverse machanism")
 
@@ -62,7 +64,24 @@ func RestartReverse(firstStart bool) {
 			}
 		}
 
+		isRetrying := false
+	reverseRetry:
 		for {
+			if isRetrying {
+				log.Infoln("wait for 3 seconds before retrying reverse connection...")
+
+				t := time.NewTimer(3 * time.Second)
+				select {
+				case <-ctx.Done():
+					t.Stop()
+					// Cancelled
+					return
+				case <-t.C:
+				}
+			} else {
+				isRetrying = true
+			}
+
 			conn1, conn2 := net.Pipe()
 
 			go func() {
@@ -81,7 +100,7 @@ func RestartReverse(firstStart bool) {
 				case <-ctx.Done():
 					log.Debugln("reverse: got ctx.Done()")
 					conn1.Close()
-					return
+					continue reverseRetry
 				default:
 					_, err := muxServerHandleFrame(w, conn1)
 					if err != nil {
@@ -91,7 +110,7 @@ func RestartReverse(firstStart bool) {
 							log.Warnln("reverse: when handling frame: %v", err)
 						}
 						conn1.Close()
-						return
+						continue reverseRetry
 					}
 
 				}
@@ -280,19 +299,19 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 		return f, nil
 	case SessionStatusNew:
 		log.Debugln("server worker %p handling SessionStatusNew", w)
-		// if f.NetType != byte(0x01) {
-		// 	// Non-TCP
-		// 	// Drop silently
-		// 	log.Debugln("server worker %p got a non-tcp connection (%d), sessionID=%d, dropping it", w, f.NetType, f.SessionID)
-		// 	if (f.Option & OptionData) != 0 {
-		// 		err = muxUtilDiscardData(conn)
-		// 		if err != nil {
-		// 			log.Errorln("muxServerHandleFrame: error when discarding data: %v", err)
-		// 			return nil, err
-		// 		}
-		// 	}
-		// 	return f, nil
-		// }
+		if f.NetType != byte(0x01) && f.TargetDomain != "reverse.internal.v2fly.org" {
+			// Non-TCP
+			// Drop silently
+			log.Debugln("server worker %p got a non-tcp connection (%d), sessionID=%d, dropping it", w, f.NetType, f.SessionID)
+			if (f.Option & OptionData) != 0 {
+				err = muxUtilDiscardData(conn)
+				if err != nil {
+					log.Errorln("muxServerHandleFrame: error when discarding data: %v", err)
+					return nil, err
+				}
+			}
+			return f, nil
+		}
 		sessionConn1, sessionConn2 := net.Pipe()
 		sessionConnMeta := &C.Metadata{}
 		sessionConnMeta.NetWork = C.TCP

@@ -663,6 +663,7 @@ func match(metadata *C.Metadata) (C.Proxy, C.Rule, error) {
 		}
 
 		if matched, ada := rule.Match(metadata); matched {
+			// TODO
 			adapter, ok := proxies[ada]
 			if !ok {
 				continue

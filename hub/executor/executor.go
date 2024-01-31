@@ -379,7 +379,7 @@ func updateSniffer(sniffer *config.Sniffer) {
 }
 
 func updateTunnels(tunnels []LC.Tunnel) {
-	tunnel.RestartReverse(true)
+	tunnel.RestartReverse()
 	listener.PatchTunnel(tunnels, tunnel.Tunnel)
 }
 
