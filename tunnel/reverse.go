@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"strconv"
 	"sync"
 	"time"
 
@@ -22,10 +21,19 @@ var (
 	reverseCtx        context.Context
 	reverseCtxCancel  context.CancelFunc
 	reverseMux        sync.Mutex
-	reverseFirstStart bool
+	reverseFirstStart bool = true
 )
 
-func RestartReverse() {
+type ReverseConf struct {
+	ReverseIdentDomain string `yaml:"reverseIdentDomain"`
+	BridgeConnSubRule  string `yaml:"bridgeConnSubRule"`
+	PayloadConnSubRule string `yaml:"payloadConnSubRule"`
+	// WorkerNum currently is not used.
+	WorkerNum          int `yaml:"workerNum"`
+	RetryDelayMilliSec int `yaml:"retryDelayMilliSec"`
+}
+
+func RestartReverse(cfgList []ReverseConf) {
 	reverseMux.Lock()
 	defer reverseMux.Unlock()
 
@@ -37,86 +45,111 @@ func RestartReverse() {
 	reverseCtx = ctx
 	reverseCtxCancel = cancel
 
-	go func() {
-		if reverseFirstStart {
-			time.Sleep(1 * time.Second)
-			reverseFirstStart = false
-		}
-		log.Debugln("(re)start reverse machanism")
+	var delayTimerWhenStartingReverse *time.Timer
+	if reverseFirstStart {
+		log.Infoln("wait for 1 second before starting reverse mechanism...")
 
-		address := "v2ray-expose-a.home.arpa:0"
+		delayTimerWhenStartingReverse = time.NewTimer(1 * time.Second)
+		reverseFirstStart = false
+	}
 
-		metadata := &C.Metadata{}
-		metadata.NetWork = C.TCP
-		metadata.Type = C.TUNNEL
-		metadata.DNSMode = C.DNSNormal
-		metadata.Process = C.MihomoName
-		metadata.SpecialProxy = "Localhost-Vmess-Relay"
+	log.Debugln("(re)start reverse machanism")
 
-		if h, port, err := net.SplitHostPort(address); err == nil {
-			if port, err := strconv.ParseUint(port, 10, 16); err == nil {
-				metadata.DstPort = uint16(port)
-			}
-			if ip, err := netip.ParseAddr(h); err == nil {
-				metadata.DstIP = ip
-			} else {
-				metadata.Host = h
-			}
+	for _, cfg := range cfgList {
+		reverseIdentDomain := ""
+		reverseIdentIP, err := netip.ParseAddr(cfg.ReverseIdentDomain)
+		if err == nil {
+			reverseIdentIP = netip.Addr{}
+		} else {
+			reverseIdentDomain = cfg.ReverseIdentDomain
 		}
 
-		isRetrying := false
-	reverseRetry:
-		for {
-			if isRetrying {
-				log.Infoln("wait for 3 seconds before retrying reverse connection...")
+		thisCfg := cfg
 
-				t := time.NewTimer(3 * time.Second)
+		go func() {
+			if delayTimerWhenStartingReverse != nil {
+				// Delay 1s before start
 				select {
 				case <-ctx.Done():
-					t.Stop()
 					// Cancelled
 					return
-				case <-t.C:
+				case <-delayTimerWhenStartingReverse.C:
 				}
+			}
+
+			metadata := &C.Metadata{}
+			metadata.NetWork = C.TCP
+			metadata.Type = C.TUNNEL
+			metadata.DNSMode = C.DNSNormal
+			metadata.Process = C.MihomoName
+
+			metadata.DstPort = uint16(0)
+			if reverseIdentIP.IsValid() {
+				metadata.DstIP = reverseIdentIP
 			} else {
-				isRetrying = true
+				metadata.Host = reverseIdentDomain
 			}
 
-			conn1, conn2 := net.Pipe()
+			metadata.SpecialRules = thisCfg.BridgeConnSubRule
 
-			go func() {
-				log.Debugln("starts reverse bridge connection")
-				Tunnel.HandleTCPConn(conn2, metadata)
-				log.Debugln("ends reverse bridge connection")
-			}()
-
-			// conn1 is a V2Ray Mux Server Worker connection.
-			w := &MuxServerWorker{
-				sessions: make(map[uint16]*MuxSession, 16),
-			}
-
+			isRetrying := false
+		reverseRetry:
 			for {
-				select {
-				case <-ctx.Done():
-					log.Debugln("reverse: got ctx.Done()")
-					conn1.Close()
-					continue reverseRetry
-				default:
-					_, err := muxServerHandleFrame(w, conn1)
-					if err != nil {
-						if errors.Is(err, io.EOF) {
-							log.Warnln("reverse: unexpected EOF in bridge connection, aborting")
-						} else {
-							log.Warnln("reverse: when handling frame: %v", err)
-						}
+				if isRetrying {
+					log.Infoln("wait for 3 seconds before retrying reverse connection...")
+
+					t := time.NewTimer(3 * time.Second)
+					select {
+					case <-ctx.Done():
+						t.Stop()
+						// Cancelled
+						return
+					case <-t.C:
+					}
+				} else {
+					isRetrying = true
+				}
+
+				conn1, conn2 := net.Pipe()
+
+				go func() {
+					log.Debugln("starts reverse bridge connection")
+					Tunnel.HandleTCPConn(conn2, metadata)
+					log.Debugln("ends reverse bridge connection")
+				}()
+
+				// conn1 is a V2Ray Mux Server Worker connection.
+				w := &MuxServerWorker{
+					sessions:           make(map[uint16]*MuxSession, 16),
+					PayloadConnSubRule: thisCfg.PayloadConnSubRule,
+				}
+
+				log.Debugln("reverse: new MuxServerWorker %p: reverseIdentDomain=%s, reverseIdentIP=%s, bridgeConnSubRule=%s, payloadConnSubRule=%s", w, reverseIdentDomain, reverseIdentIP.String(), thisCfg.BridgeConnSubRule, thisCfg.PayloadConnSubRule)
+
+				for {
+					select {
+					case <-ctx.Done():
+						log.Debugln("reverse: MuxServerWorker %p: got ctx.Done()", w)
 						conn1.Close()
 						continue reverseRetry
-					}
+					default:
+						_, err := muxServerHandleFrame(w, conn1)
+						if err != nil {
+							if errors.Is(err, io.EOF) {
+								log.Warnln("reverse: MuxServerWorker %p: unexpected EOF in bridge connection, aborting", w)
+							} else {
+								log.Warnln("reverse: MuxServerWorker %p: when handling frame: %v", w, err)
+							}
+							conn1.Close()
+							continue reverseRetry
+						}
 
+					}
 				}
 			}
-		}
-	}()
+		}()
+	}
+
 }
 
 type MuxSession struct {
@@ -125,7 +158,8 @@ type MuxSession struct {
 
 type MuxServerWorker struct {
 	sync.RWMutex
-	sessions map[uint16]*MuxSession
+	sessions           map[uint16]*MuxSession
+	PayloadConnSubRule string
 }
 
 type FrameMetadata struct {
@@ -229,7 +263,7 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 		}
 		s, found := muxServerGetSession(w, f.SessionID)
 		if !found {
-			log.Debugln("server worker %p: session %d not found; notify remote side to end this session", w, f.SessionID)
+			log.Warnln("server worker %p: session %d not found; notify remote side to end this session", w, f.SessionID)
 			// Notify remote peer to close this session.
 			responseBuf := [6]byte{}
 			binary.BigEndian.PutUint16(responseBuf[0:2], uint16(4))
@@ -302,7 +336,7 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 		if f.NetType != byte(0x01) && f.TargetDomain != "reverse.internal.v2fly.org" {
 			// Non-TCP
 			// Drop silently
-			log.Debugln("server worker %p got a non-tcp connection (%d), sessionID=%d, dropping it", w, f.NetType, f.SessionID)
+			log.Warnln("server worker %p got a non-tcp connection (%d), sessionID=%d, dropping it", w, f.NetType, f.SessionID)
 			if (f.Option & OptionData) != 0 {
 				err = muxUtilDiscardData(conn)
 				if err != nil {
@@ -317,7 +351,7 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 		sessionConnMeta.NetWork = C.TCP
 		sessionConnMeta.Type = C.TUNNEL
 		sessionConnMeta.DNSMode = C.DNSNormal
-		sessionConnMeta.SpecialRules = "reverse-sub-rule"
+		sessionConnMeta.SpecialRules = w.PayloadConnSubRule
 		sessionConnMeta.DstPort = f.TargetPort
 		sessionConnMeta.DstIP = f.TargetIP
 		sessionConnMeta.Host = f.TargetDomain
@@ -325,6 +359,7 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 		go func() {
 			log.Debugln("reverse: new reverse connection: serverWorker=%p, sessionID=%d, dest= %s / %s : %d", w, f.SessionID, f.TargetDomain, f.TargetIP.String(), f.TargetPort)
 			if f.TargetDomain == "reverse.internal.v2fly.org" {
+				log.Debugln("reverse: the reverse conn is control connection, piping it to black hole: serverWorker=%p, sessionID=%d, dest= %s / %s : %d", w, f.SessionID, f.TargetDomain, f.TargetIP.String(), f.TargetPort)
 				io.Copy(io.Discard, sessionConn2)
 			} else {
 				Tunnel.HandleTCPConn(sessionConn2, sessionConnMeta)
@@ -400,8 +435,7 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 			// net.Pipe() has internal lock
 			_, err = conn.Write(responseBuf[:])
 			if err != nil {
-				// return nil, err
-				// TODO: report error
+				log.Warnln("reverse: serverWorker=%p, sessionID=%d sessionConn -> muxConn copy coroutine tried to notify remote peer to close session, err encountered: %v", w, thisSessionID, err)
 			}
 
 			sessionConn1.Close()
@@ -435,6 +469,7 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 				// net.Pipe() has internal lock
 				_, err := conn.Write(responseBuf[:])
 				if err != nil {
+					muxServerCloseSession(w, f.SessionID, s)
 					return nil, err
 				}
 

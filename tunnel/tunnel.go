@@ -7,6 +7,8 @@ import (
 	"net/netip"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -663,7 +665,38 @@ func match(metadata *C.Metadata) (C.Proxy, C.Rule, error) {
 		}
 
 		if matched, ada := rule.Match(metadata); matched {
-			// TODO
+			if strings.Contains(ada, ":::") {
+				overrideHost := ""
+				overridePort := int64(-1)
+				actionParts := strings.Split(ada, ":::")
+				if len(actionParts) >= 1 {
+					ada = actionParts[0]
+				}
+				if len(actionParts) >= 2 {
+					overrideHost = actionParts[1]
+				}
+				if len(actionParts) >= 3 {
+					var err error
+					overridePort, err = strconv.ParseInt(actionParts[2], 10, 32)
+					if err != nil || overridePort < 0 || overridePort >= 65536 {
+						overridePort = -1
+					}
+				}
+
+				if overrideHost != "" {
+					if ip, err := netip.ParseAddr(overrideHost); err == nil {
+						metadata.DstIP = ip
+						metadata.Host = ""
+					} else {
+						metadata.DstIP = netip.Addr{}
+						metadata.Host = overrideHost
+					}
+				}
+
+				if overridePort != -1 {
+					metadata.DstPort = uint16(overridePort)
+				}
+			}
 			adapter, ok := proxies[ada]
 			if !ok {
 				continue

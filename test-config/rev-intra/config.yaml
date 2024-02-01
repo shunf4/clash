@@ -13,7 +13,6 @@ keep-alive-interval: 15
 
 hosts:
   'myintrasrvexposed.home.arpa': '127.0.111.111'
-  's2.a.home.arpa': '127.0.112.112'
 
 profile:
   store-selected: true
@@ -34,3 +33,15 @@ proxies:
     uuid: "591bd744-205b-4327-84a6-5530d35df165"
     cipher: auto
     alterId: 0
+
+sub-rules:
+  android-bridge-conn-rule:
+    - MATCH,Localhost-Vmess-Relay
+  android-payload-conn-rule:
+    - MATCH,DIRECT:::127.0.112.112:::8111
+
+reverses:
+  - reverseIdentDomain: v2ray-expose-a.home.arpa
+    bridgeConnSubRule: android-bridge-conn-rule
+    payloadConnSubRule: android-payload-conn-rule
+    

@@ -174,24 +174,25 @@ type Experimental struct {
 
 // Config is mihomo config manager
 type Config struct {
-	General       *General
-	IPTables      *IPTables
-	NTP           *NTP
-	DNS           *DNS
-	Experimental  *Experimental
-	Hosts         *trie.DomainTrie[resolver.HostValue]
-	HostsDialIPDirectlyTrie         *trie.DomainTrie[bool]
-	Profile       *Profile
-	Rules         []C.Rule
-	SubRules      map[string][]C.Rule
-	Users         []auth.AuthUser
-	Proxies       map[string]C.Proxy
-	Listeners     map[string]C.InboundListener
-	Providers     map[string]providerTypes.ProxyProvider
-	RuleProviders map[string]providerTypes.RuleProvider
-	Tunnels       []LC.Tunnel
-	Sniffer       *Sniffer
-	TLS           *TLS
+	General                 *General
+	IPTables                *IPTables
+	NTP                     *NTP
+	DNS                     *DNS
+	Experimental            *Experimental
+	Hosts                   *trie.DomainTrie[resolver.HostValue]
+	HostsDialIPDirectlyTrie *trie.DomainTrie[bool]
+	Profile                 *Profile
+	Rules                   []C.Rule
+	SubRules                map[string][]C.Rule
+	Users                   []auth.AuthUser
+	Proxies                 map[string]C.Proxy
+	Listeners               map[string]C.InboundListener
+	Providers               map[string]providerTypes.ProxyProvider
+	RuleProviders           map[string]providerTypes.RuleProvider
+	Tunnels                 []LC.Tunnel
+	Reverses                []T.ReverseConf
+	Sniffer                 *Sniffer
+	TLS                     *TLS
 }
 
 type RawNTP struct {
@@ -302,7 +303,7 @@ type RawConfig struct {
 	Mode                    T.TunnelMode      `yaml:"mode" json:"mode"`
 	UnifiedDelay            bool              `yaml:"unified-delay" json:"unified-delay"`
 	LogLevel                log.LogLevel      `yaml:"log-level" json:"log-level"`
-	DelayTestUrl       string       `yaml:"delay-test-url"`
+	DelayTestUrl            string            `yaml:"delay-test-url"`
 	IPv6                    bool              `yaml:"ipv6" json:"ipv6"`
 	ExternalController      string            `yaml:"external-controller"`
 	ExternalControllerTLS   string            `yaml:"external-controller-tls"`
@@ -343,6 +344,7 @@ type RawConfig struct {
 	SubRules      map[string][]string       `yaml:"sub-rules"`
 	RawTLS        TLS                       `yaml:"tls"`
 	Listeners     []map[string]any          `yaml:"listeners"`
+	Reverses      []T.ReverseConf           `yaml:"reverses"`
 
 	ClashForAndroid RawClashForAndroid `yaml:"clash-for-android" json:"clash-for-android"`
 }
@@ -407,7 +409,7 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 		UnifiedDelay:      false,
 		Authentication:    []string{},
 		LogLevel:          log.INFO,
-		DelayTestUrl:   "",
+		DelayTestUrl:      "",
 		Hosts:             map[string]any{},
 		Rule:              []string{},
 		Proxy:             []map[string]any{},
@@ -601,6 +603,25 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		}
 	}
 
+	config.Reverses = rawCfg.Reverses
+	for _, r := range config.Reverses {
+		if r.ReverseIdentDomain == "" {
+			return nil, fmt.Errorf("reverse.reverseIdentDomain is empty")
+		}
+		if r.RetryDelayMilliSec == 0 {
+			r.RetryDelayMilliSec = 3000
+		}
+		if r.RetryDelayMilliSec < 0 {
+			return nil, fmt.Errorf("reverse.retryDelayMilliSec is invalid")
+		}
+		if r.WorkerNum == 0 {
+			r.WorkerNum = 1
+		}
+		if r.WorkerNum < 1 || r.WorkerNum > 50 {
+			return nil, fmt.Errorf("reverse.workerNum is invalid (should between 1 and 50)")
+		}
+	}
+
 	config.Sniffer, err = parseSniffer(rawCfg.Sniffer)
 	if err != nil {
 		return nil, err
@@ -677,7 +698,7 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 		UnifiedDelay:            cfg.UnifiedDelay,
 		Mode:                    cfg.Mode,
 		LogLevel:                cfg.LogLevel,
-		DelayTestUrl: cfg.DelayTestUrl,
+		DelayTestUrl:            cfg.DelayTestUrl,
 		IPv6:                    cfg.IPv6,
 		Interface:               cfg.Interface,
 		RoutingMark:             cfg.RoutingMark,
@@ -933,7 +954,8 @@ func parseRules(rulesConfig []string, proxies map[string]C.Proxy, subRules map[s
 			target = rule[l-1]
 			params = rule[l:]
 		}
-		if _, ok := proxies[target]; !ok {
+		targetParts := strings.Split(target, ":::")
+		if _, ok := proxies[targetParts[0]]; !ok {
 			if ruleName != "SUB-RULE" {
 				return nil, fmt.Errorf("%s[%d] [%s] error: proxy [%s] not found", format, idx, line, target)
 			} else if _, ok = subRules[target]; !ok {
@@ -957,7 +979,6 @@ func parseRules(rulesConfig []string, proxies map[string]C.Proxy, subRules map[s
 func parseHosts(cfg *RawConfig) (*trie.DomainTrie[resolver.HostValue], *trie.DomainTrie[bool], error) {
 	tree := trie.New[resolver.HostValue]()
 	dialIPDirectlyTree := trie.New[bool]()
-
 
 	// add default hosts
 	hostValue, _ := resolver.NewHostValueByIPs(

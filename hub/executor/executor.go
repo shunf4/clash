@@ -94,6 +94,7 @@ func ApplyConfig(cfg *config.Config, force bool) {
 	updateUsers(cfg.Users)
 	updateProxies(cfg.Proxies, cfg.Providers)
 	updateRules(cfg.Rules, cfg.SubRules, cfg.RuleProviders)
+	updateReverses(cfg.Reverses)
 	updateSniffer(cfg.Sniffer)
 	updateHosts(cfg.Hosts, cfg.HostsDialIPDirectlyTrie)
 	updateGeneral(cfg.General)
@@ -271,6 +272,10 @@ func updateRules(rules []C.Rule, subRules map[string][]C.Rule, ruleProviders map
 	tunnel.UpdateRules(rules, subRules, ruleProviders)
 }
 
+func updateReverses(reverses []tunnel.ReverseConf) {
+	tunnel.RestartReverse(reverses)
+}
+
 func loadProvider(pv provider.Provider) {
 	if pv.VehicleType() == provider.Compatible {
 		return
@@ -379,7 +384,6 @@ func updateSniffer(sniffer *config.Sniffer) {
 }
 
 func updateTunnels(tunnels []LC.Tunnel) {
-	tunnel.RestartReverse()
 	listener.PatchTunnel(tunnels, tunnel.Tunnel)
 }
 
