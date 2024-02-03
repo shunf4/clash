@@ -34,6 +34,271 @@ proxies:
     cipher: auto
     alterId: 0
 
+clashray-net-curr-as-publisher: pixel-5
+clashray-net-curr-as-visitor: true
+
+clashray-net-publishers:
+  - name: pixel-5
+    contact-proxy-group-fallback-is-lazy: false
+    contact-proxy-group-fallback-interval: 1000
+    lan-contacts:
+      # Must be in the format of *outbound* proxies
+      # Currently supported: VMess, Shadowsocks, ShadowsocksR, HTTP, SOCKS
+      # Will be added to listeners, if currently be as this publisher
+      # Need not provide rule; payload connection rule (which is computed using field `services`) will be automatically affiliated to all lan-contacts
+      - type: vmess
+        server: 192.168.1.3
+        port: 10002
+        uuid: a62c61c2-e79b-475b-9dd5-7c8c09917855
+        alterId: 0
+        cipher: auto
+      - type: vmess
+        server: 192.168.10.3
+        port: 10002
+        uuid: a62c61c2-e79b-475b-9dd5-7c8c09917855
+        alterId: 0
+        cipher: auto
+      - type: vmess
+        server: 192.168.50.3
+        port: 10002
+        uuid: a62c61c2-e79b-475b-9dd5-7c8c09917855
+        alterId: 0
+        cipher: auto
+
+    reverse-contacts:
+      - reverse-ident-domain: v2ray-expose-a.home.arpa
+        bridge-conn-proxy: Localhost-Vmess-Relay
+        # Optional, by default equals to bridge-conn-proxy
+        visitor-proxy: Localhost-Vmess-Relay
+
+      - reverse-ident-domain: v2ray-expose-a.home.arpa
+        bridge-conn-proxy: Pubaliyun-Vmess-Relay
+        visitor-proxy: Pubaliyun-Vmess-Visitor
+
+    services:
+      # For dev: dups in tunnel is allowed; needs dedup before listen
+      # a dot in tunnel hostname means equal to service hostname
+      - DOMAIN-SUFFIX,web.a.home.arpa,DIRECT,127.0.0.1:8111,visitortunnel=.:::127.0.112.1:::8111:::httpredirect=web.a.redirect.home.arpa:::127.0.117.1:::80
+      - DOMAIN,web2.a.home.arpa,DIRECT,127.0.0.1:8112,visitortunnel=+.web2.a.clashray.localhost:::127.0.0.1:::18112,visitortunnel=+.web2.a.home.arpa:::127.0.0.1:::18112
+      - DOMAIN,websecret.a.home.arpa,DIRECT,127.0.0.1:8113
+      - DOMAIN,mydb.a.home.arpa,DIRECT,192.168.56.111
+      - DOMAIN,mydb2.a.home.arpa,DIRECT,192.168.56.112,visitortunnel=.:::127.0.112.3:::12345:::httpredirect=mydb2.a.redirect.home.arpa:::127.0.117.3:::80
+      - DOMAIN,send.a.home.arpa,INTERNAL-HTTP,CLASHRAY-SEND,visitortunnel=.:::127.0.112.4:::80
+
+clashray-comment: |
+  as visitor:
+    proxies:
+      - name: clashray-net-pixel-5-lan-contact-0
+        type: vmess
+        server: 192.168.1.3
+        port: 10002
+        uuid: a62c61c2-e79b-475b-9dd5-7c8c09917855
+        alterId: 0
+        cipher: auto
+      - name: clashray-net-pixel-5-lan-contact-1
+        type: vmess
+        server: 192.168.10.3
+        port: 10002
+        uuid: a62c61c2-e79b-475b-9dd5-7c8c09917855
+        alterId: 0
+        cipher: auto
+      - name: clashray-net-pixel-5-lan-contact-2
+        type: vmess
+        server: 192.168.50.3
+        port: 10002
+        uuid: a62c61c2-e79b-475b-9dd5-7c8c09917855
+        alterId: 0
+        cipher: auto
+    proxy-groups:
+      - name: clashray-net-pixel-5-contact
+        type: fallback
+        proxies:
+          - clashray-net-pixel-5-lan-contact-0
+          - clashray-net-pixel-5-lan-contact-1
+          - clashray-net-pixel-5-lan-contact-2
+          - Localhost-Vmess-Relay
+          - Pubaliyun-Vmess-Visitor
+        url: "http://test.clashray.home.arpa"
+        interval: 1000
+        lazy: false
+    reverses: []
+    sub-rules:
+      clashray-net-pixel-5-payload-conn-rule:
+        - DOMAIN,web.a.redirect.home.arpa,INTERNAL-HTTP:::CLASHRAY-REDIRECT-127.0.112.1:8111
+        - DOMAIN,mydb2.a.redirect.home.arpa,INTERNAL-HTTP:::CLASHRAY-REDIRECT-127.0.112.3:12345
+
+
+        - DOMAIN-SUFFIX,web.a.home.arpa,clashray-net-pixel-5-contact
+        - DOMAIN,web2.a.home.arpa,clashray-net-pixel-5-contact
+        - DOMAIN,websecret.a.home.arpa,clashray-net-pixel-5-contact
+        - DOMAIN,mydb.a.home.arpa,clashray-net-pixel-5-contact
+        - DOMAIN,mydb2.a.home.arpa,clashray-net-pixel-5-contact
+        - DOMAIN,send.a.home.arpa,clashray-net-pixel-5-contact
+        - MATCH,REJECT
+    listeners:
+      - name: clashray-net-pixel-5-svc-0-tunnel-0
+        type: tunnel
+        listen: 127.0.112.1
+        port: 8111
+        network: [tcp]
+        target: web.a.home.arpa:8111
+        rule: clashray-net-pixel-5-payload-conn-rule
+      - name: clashray-net-pixel-5-svc-0-tunnel-0-httpredirect
+        type: tunnel
+        listen: 127.0.117.1
+        port: 80
+        network: [tcp]
+        target: web.a.redirect.home.arpa:18111
+        rule: clashray-net-pixel-5-payload-conn-rule
+      - name: clashray-net-pixel-5-svc-1-tunnel-0
+        type: tunnel
+        listen: 127.0.0.1
+        port: 18112
+        network: [tcp]
+        target: web2.a.home.arpa:8112
+        rule: clashray-net-pixel-5-payload-conn-rule
+      - name: clashray-net-pixel-5-svc-4-tunnel-0
+        type: tunnel
+        listen: 127.0.112.3
+        port: 12345
+        network: [tcp]
+        target: mydb2.a.home.arpa:12345
+        rule: clashray-net-pixel-5-payload-conn-rule
+      - name: clashray-net-pixel-5-svc-4-tunnel-0-httpredirect
+        type: tunnel
+        listen: 127.0.117.3
+        port: 80
+        network: [tcp]
+        target: mydb2.a.redirect.home.arpa:12345
+        rule: clashray-net-pixel-5-payload-conn-rule
+      - name: clashray-net-pixel-5-svc-5-tunnel-0
+        type: tunnel
+        listen: 127.0.112.4
+        port: 80
+        network: [tcp]
+        target: send.a.home.arpa:12345
+        rule: clashray-net-pixel-5-payload-conn-rule
+    hosts:
+      '+.web.a.home.arpa': '127.0.112.1'
+      'web.a.redirect.home.arpa': '127.0.117.1'
+      '+.web2.a.clashray.localhost': '127.0.0.1'
+      '+.web2.a.home.arpa': '127.0.0.1'
+      '+.web.a.home.arpa': '127.0.112.1'
+      'mydb2.a.home.arpa': '127.0.112.3'
+      'mydb2.a.redirect.home.arpa': '127.0.117.3'
+      'send.a.home.arpa': '127.0.112.4'
+
+
+
+
+  as publisher:
+    proxies: []
+    proxy-groups: []
+    reverses:
+      - reverse-ident-domain: v2ray-expose-a.home.arpa
+        bridge-conn-sub-rule: clashray-net-pixel-5-bridge-conn-rule-0
+        payload-conn-sub-rule: clashray-net-pixel-5-payload-conn-rule
+      - reverse-ident-domain: v2ray-expose-a.home.arpa
+        bridge-conn-sub-rule: clashray-net-pixel-5-bridge-conn-rule-1
+        payload-conn-sub-rule: clashray-net-pixel-5-payload-conn-rule
+    sub-rules:
+      clashray-net-pixel-5-bridge-conn-rule-0:
+        - MATCH,Localhost-Vmess-Relay
+      clashray-net-pixel-5-bridge-conn-rule-1:
+        - MATCH,Pubaliyun-Vmess-Relay
+      clashray-net-pixel-5-payload-conn-rule:
+        - DOMAIN,web.a.redirect.home.arpa,INTERNAL-HTTP:::CLASHRAY-REDIRECT-127.0.112.1:8111
+        - DOMAIN,mydb2.a.redirect.home.arpa,INTERNAL-HTTP:::CLASHRAY-REDIRECT-127.0.112.3:12345
+
+        - DOMAIN,test.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-TEST
+        - DOMAIN,send.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-SEND
+
+        - DOMAIN-SUFFIX,web.a.home.arpa,DIRECT:::127.0.0.1:::8111
+        - DOMAIN,web2.a.home.arpa,DIRECT:::127.0.0.1:::8112
+        - DOMAIN,websecret.a.home.arpa,DIRECT:::127.0.0.1:::8113
+        - DOMAIN,mydb.a.home.arpa,DIRECT:::192.168.56.111
+        - DOMAIN,mydb2.a.home.arpa,DIRECT:::192.168.56.112
+        - DOMAIN,send.a.home.arpa,INTERNAL-HTTP:::CLASHRAY-SEND
+    listeners:
+      - name: clashray-net-pixel-5-lan-contact-0
+        type: vmess
+        listen: 192.168.1.3
+        port: 10002
+        users:
+          - username: user
+            uuid: a62c61c2-e79b-475b-9dd5-7c8c09917855
+            alterId: 0
+        rule: clashray-net-pixel-5-payload-conn-rule
+
+      - name: clashray-net-pixel-5-lan-contact-1
+        type: vmess
+        listen: 192.168.10.3
+        port: 10002
+        users:
+          - username: user
+            uuid: a62c61c2-e79b-475b-9dd5-7c8c09917855
+            alterId: 0
+        rule: clashray-net-pixel-5-payload-conn-rule
+
+      - name: clashray-net-pixel-5-lan-contact-2
+        type: vmess
+        listen: 192.168.50.3
+        port: 10002
+        users:
+          - username: user
+            uuid: a62c61c2-e79b-475b-9dd5-7c8c09917855
+            alterId: 0
+        rule: clashray-net-pixel-5-payload-conn-rule
+
+
+      - name: clashray-net-pixel-5-svc-0-tunnel-0
+        type: tunnel
+        listen: 127.0.112.1
+        port: 8111
+        network: [tcp]
+        target: web.a.home.arpa:8111
+        rule: clashray-net-pixel-5-payload-conn-rule
+      - name: clashray-net-pixel-5-svc-0-tunnel-0-httpredirect
+        type: tunnel
+        listen: 127.0.117.1
+        port: 80
+        network: [tcp]
+        target: web.a.redirect.home.arpa:18111
+        rule: clashray-net-pixel-5-payload-conn-rule
+      - name: clashray-net-pixel-5-svc-1-tunnel-0
+        type: tunnel
+        listen: 127.0.0.1
+        port: 18112
+        network: [tcp]
+        target: web2.a.home.arpa:8112
+        rule: clashray-net-pixel-5-payload-conn-rule
+      - name: clashray-net-pixel-5-svc-4-tunnel-0
+        type: tunnel
+        listen: 127.0.112.3
+        port: 12345
+        network: [tcp]
+        target: mydb2.a.home.arpa:12345
+        rule: clashray-net-pixel-5-payload-conn-rule
+      - name: clashray-net-pixel-5-svc-4-tunnel-0-httpredirect
+        type: tunnel
+        listen: 127.0.117.3
+        port: 80
+        network: [tcp]
+        target: mydb2.a.redirect.home.arpa:12345
+        rule: clashray-net-pixel-5-payload-conn-rule
+      - name: clashray-net-pixel-5-svc-5-tunnel-0
+        type: tunnel
+        listen: 127.0.112.4
+        port: 80
+        network: [tcp]
+        target: send.a.home.arpa:12345
+        rule: clashray-net-pixel-5-payload-conn-rule
+
+
+
+
+
+
 sub-rules:
   android-bridge-conn-rule:
     - MATCH,Localhost-Vmess-Relay

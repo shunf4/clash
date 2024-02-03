@@ -127,6 +127,13 @@ func ParseProxy(mapping map[string]any) (C.Proxy, error) {
 			break
 		}
 		proxy = outbound.NewRejectWithOption(*rejectOption)
+	case "internalhttp":
+		internalHTTPOption := &outbound.InternalHTTPOption{}
+		err = decoder.Decode(mapping, internalHTTPOption)
+		if err != nil {
+			break
+		}
+		proxy = outbound.NewInternalHTTP(*internalHTTPOption)
 	default:
 		return nil, fmt.Errorf("unsupport proxy type: %s", proxyType)
 	}

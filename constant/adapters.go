@@ -40,6 +40,8 @@ const (
 	Hysteria2
 	WireGuard
 	Tuic
+
+	InternalHTTP
 )
 
 const (

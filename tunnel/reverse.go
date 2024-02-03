@@ -20,7 +20,7 @@ import (
 var (
 	reverseCtx        context.Context
 	reverseCtxCancel  context.CancelFunc
-	reverseMux        sync.Mutex
+	reverseMutex      sync.Mutex
 	reverseFirstStart bool = true
 )
 
@@ -34,8 +34,8 @@ type ReverseConf struct {
 }
 
 func RestartReverse(cfgList []ReverseConf) {
-	reverseMux.Lock()
-	defer reverseMux.Unlock()
+	reverseMutex.Lock()
+	defer reverseMutex.Unlock()
 
 	if reverseCtxCancel != nil {
 		reverseCtxCancel()
