@@ -25,12 +25,12 @@ var (
 )
 
 type ReverseConf struct {
-	ReverseIdentDomain string `yaml:"reverseIdentDomain"`
-	BridgeConnSubRule  string `yaml:"bridgeConnSubRule"`
-	PayloadConnSubRule string `yaml:"payloadConnSubRule"`
+	ReverseIdentDomain string `yaml:"reverse-ident-domain"`
+	BridgeConnSubRule  string `yaml:"bridge-conn-sub-rule"`
+	PayloadConnSubRule string `yaml:"payload-conn-sub-rule"`
 	// WorkerNum currently is not used.
-	WorkerNum          int `yaml:"workerNum"`
-	RetryDelayMilliSec int `yaml:"retryDelayMilliSec"`
+	WorkerNum          int `yaml:"worker-num"`
+	RetryDelayMillisec int `yaml:"retry-delay-millisec"`
 }
 
 func RestartReverse(cfgList []ReverseConf) {
@@ -96,9 +96,9 @@ func RestartReverse(cfgList []ReverseConf) {
 		reverseRetry:
 			for {
 				if isRetrying {
-					log.Infoln("wait for 3 seconds before retrying reverse connection...")
+					log.Infoln("wait for %d milliseconds before retrying reverse connection...", thisCfg.RetryDelayMillisec)
 
-					t := time.NewTimer(3 * time.Second)
+					t := time.NewTimer(time.Duration(thisCfg.RetryDelayMillisec) * time.Millisecond)
 					select {
 					case <-ctx.Done():
 						t.Stop()

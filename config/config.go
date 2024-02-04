@@ -10,8 +10,11 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/exp/maps"
 
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/adapter/outbound"
@@ -172,6 +175,32 @@ type Experimental struct {
 	QUICGoDisableECN bool     `yaml:"quic-go-disable-ecn"`
 }
 
+type ClashrayReverseContact struct {
+	ReverseIdentDomain string `yaml:"reverse-ident-domain"`
+	BridgeConnProxy    string `yaml:"bridge-conn-proxy"`
+	VisitorProxy       string `yaml:"visitor-proxy"`
+	// WorkerNum currently is not used.
+	WorkerNum          int `yaml:"worker-num"`
+	RetryDelayMillisec int `yaml:"retry-delay-millisec"`
+}
+
+type ClashrayNetPublisher struct {
+	Name                              string                   `yaml:"name"`
+	ContactProxyGroupFallbackIsLazy   bool                     `yaml:"contact-proxy-group-fallback-is-lazy"`
+	ContactProxyGroupFallbackInterval int                      `yaml:"contact-proxy-group-fallback-interval"`
+	LanContactsCommonFields           map[string]interface{}   `yaml:"lan-contacts-common-fields"`
+	LanContacts                       []map[string]interface{} `yaml:"lan-contacts"`
+	ReverseContacts                   []ClashrayReverseContact `yaml:"reverse-contacts"`
+	Services                          []string                 `yaml:"services"`
+}
+
+type Clashray struct {
+	ClashrayNetCurrAsPublisher string                 `yaml:"clashray-net-curr-as-publisher"`
+	ClashrayNetCurrIsAsVisitor bool                   `yaml:"clashray-net-curr-is-as-visitor"`
+	ClashrayNetPublishers      []ClashrayNetPublisher `yaml:"clashray-net-publishers"`
+	ClashrayNetPublishersMap   map[string]*ClashrayNetPublisher
+}
+
 // Config is mihomo config manager
 type Config struct {
 	General                 *General
@@ -191,8 +220,9 @@ type Config struct {
 	RuleProviders           map[string]providerTypes.RuleProvider
 	Tunnels                 []LC.Tunnel
 	Reverses                []T.ReverseConf
-	Sniffer                 *Sniffer
-	TLS                     *TLS
+	*Clashray
+	Sniffer *Sniffer
+	TLS     *TLS
 }
 
 type RawNTP struct {
@@ -347,6 +377,10 @@ type RawConfig struct {
 	Reverses      []T.ReverseConf           `yaml:"reverses"`
 
 	ClashForAndroid RawClashForAndroid `yaml:"clash-for-android" json:"clash-for-android"`
+
+	ClashrayNetCurrAsPublisher string `yaml:"clashray-net-curr-as-publisher"`
+	ClashrayNetCurrIsAsVisitor bool   `yaml:"clashray-net-curr-is-as-visitor"`
+	ClashrayNetPublishers      []ClashrayNetPublisher
 }
 
 type GeoXUrl struct {
@@ -503,6 +537,9 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 			GeoSite: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat",
 		},
 		ExternalUIURL: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip",
+
+		ClashrayNetCurrAsPublisher: "",
+		ClashrayNetCurrIsAsVisitor: false,
 	}
 
 	if err := yaml.Unmarshal(buf, rawCfg); err != nil {
@@ -516,6 +553,62 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	config := &Config{}
 	log.Infoln("Start initial configuration in progress") //Segment finished in xxm
 	startTime := time.Now()
+
+	config.Clashray.ClashrayNetCurrAsPublisher = rawCfg.ClashrayNetCurrAsPublisher
+	config.Clashray.ClashrayNetCurrIsAsVisitor = rawCfg.ClashrayNetCurrIsAsVisitor
+	config.Clashray.ClashrayNetPublishers = rawCfg.ClashrayNetPublishers
+	pMap := make(map[string]*ClashrayNetPublisher)
+	config.Clashray.ClashrayNetPublishersMap = pMap
+
+	for i := range config.Clashray.ClashrayNetPublishers {
+		p := &config.Clashray.ClashrayNetPublishers[i]
+		if p.Name == "" {
+			return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers[%d].Name is empty", i)
+		}
+		if _, found := pMap[p.Name]; found {
+			return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers Name=%s is duplicate", p.Name)
+		}
+		isCurrentPublisher := false
+		if config.Clashray.ClashrayNetCurrAsPublisher == p.Name {
+			isCurrentPublisher = true
+		}
+		isVisitorAndNotCurrentPublisher := config.Clashray.ClashrayNetCurrIsAsVisitor && !isCurrentPublisher
+		pMap[p.Name] = p
+		if p.ContactProxyGroupFallbackInterval < 5 || p.ContactProxyGroupFallbackInterval > 86400*1000*7 {
+			return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s): ContactProxyGroupFallbackInterval is invalid (%d)", p.Name, p.ContactProxyGroupFallbackInterval)
+		}
+
+		var newProxyGroup map[string]interface{}
+		if isVisitorAndNotCurrentPublisher {
+			newProxyGroup = make(map[string]interface{})
+			newProxyGroup["name"] = "clashray-net-" + p.Name + "-contact"
+			newProxyGroup["type"] = "fallback"
+			newProxyGroup["proxies"] = []string{}
+			newProxyGroup["url"] = "http://test.clashray.home.arpa"
+			newProxyGroup["interval"] = p.ContactProxyGroupFallbackInterval
+			newProxyGroup["lazy"] = p.ContactProxyGroupFallbackIsLazy
+			rawCfg.ProxyGroup = append(rawCfg.ProxyGroup, newProxyGroup)
+		}
+
+		for lci := range p.LanContacts {
+			lc := &p.LanContacts[lci]
+			var fullLanContact map[string]interface{}
+			if p.LanContactsCommonFields != nil {
+				fullLanContact = make(map[string]interface{})
+				maps.Copy(fullLanContact, p.LanContactsCommonFields)
+				maps.Copy(fullLanContact, *lc)
+			} else {
+				fullLanContact = *lc
+			}
+			currLanContactName := "clashray-net-" + p.Name + "-lan-contact-" + strconv.Itoa(lci)
+			fullLanContact["name"] = currLanContactName
+			if isVisitorAndNotCurrentPublisher {
+				rawCfg.Proxy = append(rawCfg.Proxy, fullLanContact)
+				newProxyGroup["proxies"] = append(newProxyGroup["proxies"].([]string), currLanContactName)
+			}
+		}
+	}
+
 	config.Experimental = &rawCfg.Experimental
 	config.Profile = &rawCfg.Profile
 	config.IPTables = &rawCfg.IPTables
@@ -608,11 +701,11 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		if r.ReverseIdentDomain == "" {
 			return nil, fmt.Errorf("reverse.reverseIdentDomain is empty")
 		}
-		if r.RetryDelayMilliSec == 0 {
-			r.RetryDelayMilliSec = 3000
+		if r.RetryDelayMillisec == 0 {
+			r.RetryDelayMillisec = 3000
 		}
-		if r.RetryDelayMilliSec < 0 {
-			return nil, fmt.Errorf("reverse.retryDelayMilliSec is invalid")
+		if r.RetryDelayMillisec < 0 {
+			return nil, fmt.Errorf("reverse.retryDelayMillisec is invalid")
 		}
 		if r.WorkerNum == 0 {
 			r.WorkerNum = 1

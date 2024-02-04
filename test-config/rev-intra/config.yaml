@@ -35,13 +35,13 @@ proxies:
     alterId: 0
 
 clashray-net-curr-as-publisher: pixel-5
-clashray-net-curr-as-visitor: true
+clashray-net-curr-is-as-visitor: true
 
 clashray-net-publishers:
   - name: pixel-5
     contact-proxy-group-fallback-is-lazy: false
     contact-proxy-group-fallback-interval: 1000
-    lan-contacts-common-field:
+    lan-contacts-common-fields:
       type: vmess
       uuid: a62c61c2-e79b-475b-9dd5-7c8c09917855
       cipher: auto

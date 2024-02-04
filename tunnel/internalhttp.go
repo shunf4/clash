@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/aohorodnyk/mimeheader"
@@ -76,6 +77,9 @@ func RefreshInternalHTTP() {
 			Replacement: "_",
 			MaxLength:   60,
 		})
+		if !filepath.IsLocal(safeName) {
+			safeName = filepath.Base(safeName) + "_"
+		}
 		if err != nil {
 			internalHttpError(w, r, http.StatusInternalServerError, "Error during filename process: %v", err)
 			return
