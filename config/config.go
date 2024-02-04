@@ -188,6 +188,8 @@ type ClashrayNetPublisher struct {
 	Name                              string                   `yaml:"name"`
 	ContactProxyGroupFallbackIsLazy   bool                     `yaml:"contact-proxy-group-fallback-is-lazy"`
 	ContactProxyGroupFallbackInterval int                      `yaml:"contact-proxy-group-fallback-interval"`
+	ContactHealthcheckURL             string                   `yaml:"contact-healthcheck-url"`
+	ContactSendURL                    string                   `yaml:"contact-send-url"`
 	LanContactsCommonFields           map[string]interface{}   `yaml:"lan-contacts-common-fields"`
 	LanContacts                       []map[string]interface{} `yaml:"lan-contacts"`
 	ReverseContacts                   []ClashrayReverseContact `yaml:"reverse-contacts"`
@@ -220,7 +222,7 @@ type Config struct {
 	RuleProviders           map[string]providerTypes.RuleProvider
 	Tunnels                 []LC.Tunnel
 	Reverses                []T.ReverseConf
-	*Clashray
+	Clashray
 	Sniffer *Sniffer
 	TLS     *TLS
 }
@@ -378,9 +380,9 @@ type RawConfig struct {
 
 	ClashForAndroid RawClashForAndroid `yaml:"clash-for-android" json:"clash-for-android"`
 
-	ClashrayNetCurrAsPublisher string `yaml:"clashray-net-curr-as-publisher"`
-	ClashrayNetCurrIsAsVisitor bool   `yaml:"clashray-net-curr-is-as-visitor"`
-	ClashrayNetPublishers      []ClashrayNetPublisher
+	ClashrayNetCurrAsPublisher string                 `yaml:"clashray-net-curr-as-publisher"`
+	ClashrayNetCurrIsAsVisitor bool                   `yaml:"clashray-net-curr-is-as-visitor"`
+	ClashrayNetPublishers      []ClashrayNetPublisher `yaml:"clashray-net-publishers"`
 }
 
 type GeoXUrl struct {
@@ -562,6 +564,22 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	pMap := make(map[string]*ClashrayNetPublisher)
 	config.Clashray.ClashrayNetPublishersMap = pMap
 
+	if rawCfg.SubRules == nil {
+		rawCfg.SubRules = make(map[string][]string)
+	}
+	if rawCfg.ProxyGroup == nil {
+		rawCfg.ProxyGroup = make([]map[string]any, 0)
+	}
+	if rawCfg.Proxy == nil {
+		rawCfg.Proxy = make([]map[string]any, 0)
+	}
+	if rawCfg.Listeners == nil {
+		rawCfg.Listeners = make([]map[string]any, 0)
+	}
+	if rawCfg.Reverses == nil {
+		rawCfg.Reverses = make([]T.ReverseConf, 0)
+	}
+
 	publisherEverMatched := false
 
 	for i := range config.Clashray.ClashrayNetPublishers {
@@ -593,7 +611,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			newProxyGroup["name"] = currContactProxyGroupName
 			newProxyGroup["type"] = "fallback"
 			newProxyGroup["proxies"] = []string{}
-			newProxyGroup["url"] = "http://test.clashray.home.arpa"
+			newProxyGroup["url"] = p.ContactHealthcheckURL
 			newProxyGroup["interval"] = p.ContactProxyGroupFallbackInterval
 			newProxyGroup["lazy"] = p.ContactProxyGroupFallbackIsLazy
 			rawCfg.ProxyGroup = append(rawCfg.ProxyGroup, newProxyGroup)
@@ -754,6 +772,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			publisherPayloadConnSvcRules = append(publisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestAddr))
 
 			visitorTunnelDedup := map[string]bool{}
+			visitorHTTPRedirectTunnelDedup := map[string]bool{}
 			for spi := 4; spi < len(sParts); spi++ {
 				opt := sParts[spi]
 				if vt, ok := strings.CutPrefix(opt, "visitortunnel="); ok {
@@ -824,18 +843,21 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 						}
 						httpRedirectListenPort := uint16(httpRedirectListenPortRaw)
 
-						currListener := make(map[string]interface{})
-						visitorTunnelListeners = append(visitorTunnelListeners, currListener)
-						currListener["name"] = tunnelName + "-httpredirect"
-						currListener["type"] = "tunnel"
-						currListener["listen"] = httpRedirectListenHost
-						currListener["port"] = httpRedirectListenPort
-						currListener["network"] = []string{"tcp"}
-						// TODO: ?
-						currListener["target"] = httpRedirectHost + ":" + httpRedirectListenPortStr
-						currListener["rule"] = payloadConnRuleName
+						if _, found := visitorHTTPRedirectTunnelDedup[httpRedirectHost+":"+httpRedirectListenPortStr]; !found {
+							currListener := make(map[string]interface{})
+							visitorTunnelListeners = append(visitorTunnelListeners, currListener)
+							currListener["name"] = tunnelName + "-httpredirect"
+							currListener["type"] = "tunnel"
+							currListener["listen"] = httpRedirectListenHost
+							currListener["port"] = httpRedirectListenPort
+							currListener["network"] = []string{"tcp"}
+							// TODO: ?
+							currListener["target"] = httpRedirectHost + ":" + httpRedirectListenPortStr
+							currListener["rule"] = payloadConnRuleName
+						}
+						visitorHTTPRedirectTunnelDedup[httpRedirectHost+":"+httpRedirectListenPortStr] = true
 
-						visitorPayloadConnHTTPRedirectRules = append(visitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectListenHost, "INTERNAL-HTTP:::CLASHRAY-REDIRECT-"+vtListenHost+":"+vtListenPortStr))
+						visitorPayloadConnHTTPRedirectRules = append(visitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-REDIRECT-"+vtListenHost+":"+vtListenPortStr))
 
 						visitorHosts[httpRedirectHost] = httpRedirectListenHost
 					}
@@ -854,8 +876,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		}
 		if isCurrentPublisher {
 			payloadConnSubRule = append(payloadConnSubRule,
-				"DOMAIN,test.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-TEST",
-				"DOMAIN,send.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-SEND",
+				"DOMAIN,"+strings.TrimPrefix(p.ContactHealthcheckURL, "http://")+",INTERNAL-HTTP:::CLASHRAY-TEST",
+				"DOMAIN,"+strings.TrimPrefix(p.ContactSendURL, "http://")+",INTERNAL-HTTP:::CLASHRAY-SEND",
 			)
 
 			payloadConnSubRule = append(payloadConnSubRule,
@@ -980,7 +1002,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	}
 
 	config.Reverses = rawCfg.Reverses
-	for _, r := range config.Reverses {
+	for ri := range config.Reverses {
+		r := &config.Reverses[ri]
 		if r.ReverseIdentDomain == "" {
 			return nil, fmt.Errorf("reverse.reverseIdentDomain is empty")
 		}

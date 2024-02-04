@@ -41,6 +41,8 @@ clashray-net-publishers:
   - name: pixel-5
     contact-proxy-group-fallback-is-lazy: false
     contact-proxy-group-fallback-interval: 1000
+    contact-healthcheck-url: "http://test.clashray.home.arpa"
+    contact-send-url: "http://send.clashray.home.arpa"
     lan-contacts-common-fields:
       type: vmess
       uuid: a62c61c2-e79b-475b-9dd5-7c8c09917855

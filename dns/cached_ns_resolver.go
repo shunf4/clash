@@ -40,14 +40,13 @@ type dnsClientResult struct {
 }
 
 func (cnc *cachedNameserversClient) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, err error) {
-	var ipRaw interface{}
 	var ip net.IP
 
 	cnc.mu.Lock()
 
 	// get nameservers from cache
-	ipRaw, _ = cnc.cache.Get(cnc.clientName)
-	if ipRaw == nil {
+	ip, _ = cnc.cache.Get(cnc.clientName)
+	if ip == nil {
 		var ipStr string
 		isNew := false
 
@@ -102,7 +101,6 @@ func (cnc *cachedNameserversClient) ExchangeContext(ctx context.Context, m *D.Ms
 			cnc.cache.SetWithExpire(cnc.clientName, ip, time.Now().Add(cnc.cacheTimeout))
 		}
 	} else {
-		ip = ipRaw.(net.IP)
 		if ip.Equal(net.IPv4zero) {
 			cnc.mu.Unlock()
 			err := fmt.Errorf("got cached IP <IPv4zero>, not resolving (until next update)")

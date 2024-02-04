@@ -10,7 +10,7 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/",
-            "args": ["-d", "${workspaceFolder}/localdebug/config"]
+            "args": ["-d", "${workspaceFolder}/test-config/real"]
         }
     ]
 }

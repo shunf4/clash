@@ -45,11 +45,10 @@ func RestartReverse(cfgList []ReverseConf) {
 	reverseCtx = ctx
 	reverseCtxCancel = cancel
 
-	var delayTimerWhenStartingReverse *time.Timer
+	shouldDelay := false
 	if reverseFirstStart {
+		shouldDelay = true
 		log.Infoln("wait for 1 second before starting reverse mechanism...")
-
-		delayTimerWhenStartingReverse = time.NewTimer(1 * time.Second)
 		reverseFirstStart = false
 	}
 
@@ -66,12 +65,18 @@ func RestartReverse(cfgList []ReverseConf) {
 
 		thisCfg := cfg
 
+		var delayTimerWhenStartingReverse *time.Timer
+		if shouldDelay {
+			delayTimerWhenStartingReverse = time.NewTimer(1 * time.Second)
+		}
+
 		go func() {
 			if delayTimerWhenStartingReverse != nil {
 				// Delay 1s before start
 				select {
 				case <-ctx.Done():
 					// Cancelled
+					delayTimerWhenStartingReverse.Stop()
 					return
 				case <-delayTimerWhenStartingReverse.C:
 				}
@@ -333,10 +338,10 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 		return f, nil
 	case SessionStatusNew:
 		log.Debugln("server worker %p handling SessionStatusNew", w)
-		if f.NetType != byte(0x01) && f.TargetDomain != "reverse.internal.v2fly.org" {
+		if f.NetType != byte(0x01) && f.TargetDomain != "reverse.internal.v2fly.org" && f.TargetDomain != "reverse.internal.example.com" && f.TargetDomain != "reverse.internal.v2ray.com" {
 			// Non-TCP
 			// Drop silently
-			log.Warnln("server worker %p got a non-tcp connection (%d), sessionID=%d, dropping it", w, f.NetType, f.SessionID)
+			log.Warnln("server worker %p got a non-tcp connection (%d), sessionID=%d, targetDomain=%s, dropping it", w, f.NetType, f.SessionID, f.TargetDomain)
 			if (f.Option & OptionData) != 0 {
 				err = muxUtilDiscardData(conn)
 				if err != nil {
@@ -358,7 +363,7 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 
 		go func() {
 			log.Debugln("reverse: new reverse connection: serverWorker=%p, sessionID=%d, dest= %s / %s : %d", w, f.SessionID, f.TargetDomain, f.TargetIP.String(), f.TargetPort)
-			if f.TargetDomain == "reverse.internal.v2fly.org" {
+			if f.TargetDomain == "reverse.internal.v2fly.org" || f.TargetDomain == "reverse.internal.example.com" || f.TargetDomain == "reverse.internal.v2ray.com" {
 				log.Debugln("reverse: the reverse conn is control connection, piping it to black hole: serverWorker=%p, sessionID=%d, dest= %s / %s : %d", w, f.SessionID, f.TargetDomain, f.TargetIP.String(), f.TargetPort)
 				io.Copy(io.Discard, sessionConn2)
 			} else {
