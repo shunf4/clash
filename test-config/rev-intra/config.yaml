@@ -47,9 +47,10 @@ clashray-net-publishers:
       cipher: auto
     lan-contacts:
       # Must be in the format of *outbound* proxies
-      # Currently supported: VMess, Shadowsocks, ShadowsocksR, HTTP, SOCKS
+      # Currently supported: vmess, ss, http, socks5
       # Will be added to listeners, if currently be as this publisher
       # Need not provide rule; payload connection rule (which is computed using field `services`) will be automatically affiliated to all lan-contacts
+      # Extra fields for listener: publisherListen, publisherVmessUsername
       - type: vmess
         server: 192.168.1.3
         port: 10002
@@ -80,7 +81,7 @@ clashray-net-publishers:
         visitor-proxy: Pubaliyun-Vmess-Visitor
 
     services:
-      # For dev: dups in tunnel is allowed; needs dedup before listen
+      # For dev: dups of listenAddr in tunnel is allowed; needs dedup before listen
       # a dot in tunnel hostname means equal to service hostname
       - DOMAIN-SUFFIX,web.a.home.arpa,DIRECT,127.0.0.1:8111,visitortunnel=.:::127.0.112.1:::8111:::httpredirect=web.a.redirect.home.arpa:::127.0.117.1:::80
       - DOMAIN,web2.a.home.arpa,DIRECT,127.0.0.1:8112,visitortunnel=+.web2.a.clashray.localhost:::127.0.0.1:::18112,visitortunnel=+.web2.a.home.arpa:::127.0.0.1:::18112
@@ -145,7 +146,11 @@ clashray-comment: |
         - DOMAIN,mydb.a.home.arpa,clashray-net-pixel-5-contact
         - DOMAIN,mydb2.a.home.arpa,clashray-net-pixel-5-contact
         - DOMAIN,send.a.home.arpa,clashray-net-pixel-5-contact
+
+
         - MATCH,REJECT
+
+
     listeners:
       - name: clashray-net-pixel-5-svc-0-tunnel-0
         type: tunnel

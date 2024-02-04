@@ -554,11 +554,15 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	log.Infoln("Start initial configuration in progress") //Segment finished in xxm
 	startTime := time.Now()
 
+	////// shunf4 mod: clashray-net: start
+
 	config.Clashray.ClashrayNetCurrAsPublisher = rawCfg.ClashrayNetCurrAsPublisher
 	config.Clashray.ClashrayNetCurrIsAsVisitor = rawCfg.ClashrayNetCurrIsAsVisitor
 	config.Clashray.ClashrayNetPublishers = rawCfg.ClashrayNetPublishers
 	pMap := make(map[string]*ClashrayNetPublisher)
 	config.Clashray.ClashrayNetPublishersMap = pMap
+
+	publisherEverMatched := false
 
 	for i := range config.Clashray.ClashrayNetPublishers {
 		p := &config.Clashray.ClashrayNetPublishers[i]
@@ -571,17 +575,22 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		isCurrentPublisher := false
 		if config.Clashray.ClashrayNetCurrAsPublisher == p.Name {
 			isCurrentPublisher = true
+			publisherEverMatched = true
 		}
-		isVisitorAndNotCurrentPublisher := config.Clashray.ClashrayNetCurrIsAsVisitor && !isCurrentPublisher
+		isVisitor := config.Clashray.ClashrayNetCurrIsAsVisitor
+		isVisitorAndNotCurrentPublisher := isVisitor && !isCurrentPublisher
 		pMap[p.Name] = p
 		if p.ContactProxyGroupFallbackInterval < 5 || p.ContactProxyGroupFallbackInterval > 86400*1000*7 {
 			return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s): ContactProxyGroupFallbackInterval is invalid (%d)", p.Name, p.ContactProxyGroupFallbackInterval)
 		}
 
+		currContactProxyGroupName := "clashray-net-" + p.Name + "-contact"
+		payloadConnRuleName := "clashray-net-" + p.Name + "-payload-conn-rule"
+
 		var newProxyGroup map[string]interface{}
 		if isVisitorAndNotCurrentPublisher {
 			newProxyGroup = make(map[string]interface{})
-			newProxyGroup["name"] = "clashray-net-" + p.Name + "-contact"
+			newProxyGroup["name"] = currContactProxyGroupName
 			newProxyGroup["type"] = "fallback"
 			newProxyGroup["proxies"] = []string{}
 			newProxyGroup["url"] = "http://test.clashray.home.arpa"
@@ -589,6 +598,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			newProxyGroup["lazy"] = p.ContactProxyGroupFallbackIsLazy
 			rawCfg.ProxyGroup = append(rawCfg.ProxyGroup, newProxyGroup)
 		}
+
+		publisherLanContactListeners := []map[string]interface{}{}
 
 		for lci := range p.LanContacts {
 			lc := &p.LanContacts[lci]
@@ -606,8 +617,280 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 				rawCfg.Proxy = append(rawCfg.Proxy, fullLanContact)
 				newProxyGroup["proxies"] = append(newProxyGroup["proxies"].([]string), currLanContactName)
 			}
+			if isCurrentPublisher {
+				currLanContactListenerName := currLanContactName
+				currLanContactListener := map[string]interface{}{}
+				currLanContactListener["name"] = currLanContactListenerName
+				currLanContactListener["rule"] = payloadConnRuleName
+				switch fullLanContact["type"] {
+				case "vmess":
+					currLanContactListener["type"] = "vmess"
+					currLanContactListener["port"] = fullLanContact["port"]
+					if listenValue, ok := fullLanContact["publisherListen"]; ok {
+						currLanContactListener["listen"] = listenValue
+					} else {
+						currLanContactListener["listen"] = fullLanContact["server"]
+					}
+					users := []map[string]interface{}{}
+					user0 := map[string]interface{}{}
+					if vmessUsernameValue, ok := fullLanContact["publisherVmessUsername"]; ok {
+						user0["username"] = vmessUsernameValue
+					} else {
+						user0["username"] = "user"
+					}
+					user0["uuid"] = fullLanContact["uuid"]
+					user0["alterId"] = fullLanContact["alterId"]
+					users = append(users, user0)
+					currLanContactListener["users"] = users
+				case "ss":
+					currLanContactListener["type"] = "shadowsocks"
+					currLanContactListener["port"] = fullLanContact["port"]
+					if listenValue, ok := fullLanContact["publisherListen"]; ok {
+						currLanContactListener["listen"] = listenValue
+					} else {
+						currLanContactListener["listen"] = fullLanContact["server"]
+					}
+					currLanContactListener["cipher"] = fullLanContact["cipher"]
+					currLanContactListener["password"] = fullLanContact["password"]
+					if udpValue, ok := fullLanContact["udp"]; ok {
+						currLanContactListener["udp"] = udpValue
+					} else {
+						currLanContactListener["udp"] = true
+					}
+				case "http":
+					currLanContactListener["type"] = "http"
+					currLanContactListener["port"] = fullLanContact["port"]
+					if listenValue, ok := fullLanContact["publisherListen"]; ok {
+						currLanContactListener["listen"] = listenValue
+					} else {
+						currLanContactListener["listen"] = fullLanContact["server"]
+					}
+				case "socks5":
+					currLanContactListener["type"] = "http"
+					currLanContactListener["port"] = fullLanContact["port"]
+					if listenValue, ok := fullLanContact["publisherListen"]; ok {
+						currLanContactListener["listen"] = listenValue
+					} else {
+						currLanContactListener["listen"] = fullLanContact["server"]
+					}
+					if udpValue, ok := fullLanContact["udp"]; ok {
+						currLanContactListener["udp"] = udpValue
+					} else {
+						currLanContactListener["udp"] = true
+					}
+				default:
+					return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s): LanContacts[%d]: type is invalid (%s)", p.Name, lci, fullLanContact["type"])
+				}
+				publisherLanContactListeners = append(publisherLanContactListeners, currLanContactListener)
+			}
+		}
+
+		publisherReverses := []T.ReverseConf{}
+		publisherBridgeConnRules := map[string][]string{}
+
+		for rci := range p.ReverseContacts {
+			publisherBridgeConnRuleName := "clashray-net-" + p.Name + "-bridge-conn-rule-" + strconv.Itoa(rci)
+			rc := &p.ReverseContacts[rci]
+			if isVisitorAndNotCurrentPublisher {
+				visitorProxy := rc.VisitorProxy
+				if visitorProxy == "" {
+					visitorProxy = rc.BridgeConnProxy
+				}
+				newProxyGroup["proxies"] = append(newProxyGroup["proxies"].([]string), visitorProxy)
+			}
+			if isCurrentPublisher {
+				publisherBridgeConnRules[publisherBridgeConnRuleName] = []string{
+					"MATCH," + rc.BridgeConnProxy,
+				}
+
+				publisherReverses = append(publisherReverses, T.ReverseConf{
+					ReverseIdentDomain: rc.ReverseIdentDomain,
+					BridgeConnSubRule:  publisherBridgeConnRuleName,
+					PayloadConnSubRule: payloadConnRuleName,
+					WorkerNum:          rc.WorkerNum,
+					RetryDelayMillisec: rc.RetryDelayMillisec,
+				})
+			}
+		}
+
+		visitorPayloadConnHTTPRedirectRules := []string{}
+		visitorNotPublisherPayloadConnSvcRules := []string{}
+		publisherPayloadConnSvcRules := []string{}
+		visitorTunnelListeners := []map[string]interface{}{}
+		visitorHosts := map[string]interface{}{}
+
+		for si := range p.Services {
+			s := p.Services[si]
+			sParts := strings.Split(s, ",")
+			for spi := range sParts {
+				sParts[spi] = strings.TrimSpace(sParts[spi])
+			}
+			if len(sParts) < 4 {
+				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services: bad service line, len(sParts) %d less than 4", p.Name, len(sParts))
+			}
+			sMatchCond := sParts[0]
+			sHost := strings.TrimPrefix(sParts[1], ".")
+			if sHost == "" {
+				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad service line, sHost is empty", p.Name, si)
+			}
+			var sHostWildcard string
+			if sMatchCond == "DOMAIN-SUFFIX" {
+				sHostWildcard = "+." + sHost
+			} else if sMatchCond == "DOMAIN" {
+				sHostWildcard = sHost
+			} else {
+				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad service line, invalid sMatchCond %s", p.Name, si, sMatchCond)
+			}
+			sRealDestProxy := sParts[2]
+			if sRealDestProxy == "" {
+				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad service line, sRealDestProxy is empty", p.Name, si)
+			}
+			sRealDestAddr := sParts[3]
+			if sRealDestAddr == "" {
+				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad service line, sRealDestAddr is empty", p.Name, si)
+			}
+
+			visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, currContactProxyGroupName))
+			publisherPayloadConnSvcRules = append(publisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestAddr))
+
+			visitorTunnelDedup := map[string]bool{}
+			for spi := 4; spi < len(sParts); spi++ {
+				opt := sParts[spi]
+				if vt, ok := strings.CutPrefix(opt, "visitortunnel="); ok {
+					vtParts := strings.Split(vt, ":::")
+					for vtpi := range vtParts {
+						vtParts[vtpi] = strings.TrimSpace(vtParts[vtpi])
+					}
+					if len(vtParts) < 3 {
+						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, len(vtParts) %d < 3", p.Name, si, len(vtParts))
+					}
+					vtHostWildcard := vtParts[0]
+					if vtHostWildcard == "." {
+						vtHostWildcard = sHostWildcard
+					}
+					if vtHostWildcard == "" {
+						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, vtHostWildcard is empty", p.Name, si)
+					}
+					vtListenHost := vtParts[1]
+					if vtListenHost == "" {
+						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, vtListenHost is empty", p.Name, si)
+					}
+					vtListenPortStr := vtParts[2]
+					if vtListenPortStr == "" {
+						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, vtListenPortStr is empty", p.Name, si)
+					}
+					vtListenPortRaw, err := strconv.ParseUint(vtListenPortStr, 10, 16)
+					if err != nil {
+						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, parsing vtListenPortStr %s: %v", p.Name, si, vtListenPortStr, err)
+					}
+					vtListenPort := uint16(vtListenPortRaw)
+
+					tunnelName := "clashray-net-" + p.Name + "-svc-" + strconv.Itoa(si) + "-tunnel-" + strconv.Itoa(spi-4)
+
+					if _, found := visitorTunnelDedup[vtListenHost+":"+vtListenPortStr]; !found {
+						currListener := make(map[string]interface{})
+						visitorTunnelListeners = append(visitorTunnelListeners, currListener)
+						currListener["name"] = tunnelName
+						currListener["type"] = "tunnel"
+						currListener["listen"] = vtListenHost
+						currListener["port"] = vtListenPort
+						currListener["network"] = []string{"tcp"}
+						currListener["target"] = sHost + ":" + vtListenPortStr
+						currListener["rule"] = payloadConnRuleName
+					}
+					visitorTunnelDedup[vtListenHost+":"+vtListenPortStr] = true
+
+					visitorHosts[vtHostWildcard] = vtListenHost
+
+					if len(vtParts) >= 4 {
+						if len(vtParts) < 6 {
+							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel-httpredirect option, len(vtParts) %d < 6", p.Name, si, len(vtParts))
+						}
+						httpRedirectHost, cutOk := strings.CutPrefix(vtParts[3], "httpredirect=")
+						if !cutOk {
+							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel-httpredirect option, vtParts[3] %s expected starting with httpredirect=", p.Name, si, vtParts[3])
+						}
+						httpRedirectListenHost := vtParts[4]
+						if httpRedirectListenHost == "" {
+							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, httpRedirectListenHost is empty", p.Name, si)
+						}
+						httpRedirectListenPortStr := vtParts[5]
+						if httpRedirectListenPortStr == "" {
+							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, httpRedirectListenPortStr is empty", p.Name, si)
+						}
+						httpRedirectListenPortRaw, err := strconv.ParseUint(httpRedirectListenPortStr, 10, 16)
+						if err != nil {
+							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, parsing httpRedirectListenPortStr %s: %v", p.Name, si, httpRedirectListenPortStr, err)
+						}
+						httpRedirectListenPort := uint16(httpRedirectListenPortRaw)
+
+						currListener := make(map[string]interface{})
+						visitorTunnelListeners = append(visitorTunnelListeners, currListener)
+						currListener["name"] = tunnelName + "-httpredirect"
+						currListener["type"] = "tunnel"
+						currListener["listen"] = httpRedirectListenHost
+						currListener["port"] = httpRedirectListenPort
+						currListener["network"] = []string{"tcp"}
+						// TODO: ?
+						currListener["target"] = httpRedirectHost + ":" + httpRedirectListenPortStr
+						currListener["rule"] = payloadConnRuleName
+
+						visitorPayloadConnHTTPRedirectRules = append(visitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectListenHost, "INTERNAL-HTTP:::CLASHRAY-REDIRECT-"+vtListenHost+":"+vtListenPortStr))
+
+						visitorHosts[httpRedirectHost] = httpRedirectListenHost
+					}
+				}
+			}
+		}
+
+		if isCurrentPublisher {
+			maps.Copy(rawCfg.SubRules, publisherBridgeConnRules)
+		}
+
+		payloadConnSubRule := []string{}
+
+		if isVisitor {
+			payloadConnSubRule = append(payloadConnSubRule, visitorPayloadConnHTTPRedirectRules...)
+		}
+		if isCurrentPublisher {
+			payloadConnSubRule = append(payloadConnSubRule,
+				"DOMAIN,test.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-TEST",
+				"DOMAIN,send.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-SEND",
+			)
+
+			payloadConnSubRule = append(payloadConnSubRule,
+				publisherPayloadConnSvcRules...,
+			)
+		}
+		if isVisitorAndNotCurrentPublisher {
+			payloadConnSubRule = append(payloadConnSubRule, visitorNotPublisherPayloadConnSvcRules...)
+		}
+
+		payloadConnSubRule = append(payloadConnSubRule, "MATCH,REJECT")
+
+		if isVisitor || isCurrentPublisher {
+			rawCfg.SubRules[payloadConnRuleName] = payloadConnSubRule
+		}
+
+		if isCurrentPublisher {
+			rawCfg.Listeners = append(rawCfg.Listeners, publisherLanContactListeners...)
+		}
+
+		if isVisitor {
+			rawCfg.Listeners = append(rawCfg.Listeners, visitorTunnelListeners...)
+			maps.Copy(rawCfg.Hosts, visitorHosts)
+		}
+
+		if isCurrentPublisher {
+			rawCfg.Reverses = append(rawCfg.Reverses, publisherReverses...)
 		}
 	}
+
+	if publisherEverMatched && config.Clashray.ClashrayNetCurrAsPublisher != "" {
+		log.Warnln("clashray-net: warn: ClashrayNetCurrAsPublisher [%s] never matched", config.Clashray.ClashrayNetCurrAsPublisher)
+	}
+
+	////// shunf4 mod: clashray-net: end
 
 	config.Experimental = &rawCfg.Experimental
 	config.Profile = &rawCfg.Profile
