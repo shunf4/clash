@@ -318,8 +318,8 @@ type RawTuicServer struct {
 
 type RawConfig struct {
 	Port                    int               `yaml:"port" json:"port"`
-	SocksPort               int               `yaml:"socks-port" json:"socks-port"`
 	RedirPort               int               `yaml:"redir-port" json:"redir-port"`
+	SocksPort               int               `yaml:"socks-port" json:"socks-port"`
 	TProxyPort              int               `yaml:"tproxy-port" json:"tproxy-port"`
 	MixedPort               int               `yaml:"mixed-port" json:"mixed-port"`
 	ShadowSocksConfig       string            `yaml:"ss-config"`
@@ -768,8 +768,16 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad service line, sRealDestAddr is empty", p.Name, si)
 			}
 
+			sRealDestHost, sRealDestPort, err := net.SplitHostPort(sRealDestAddr)
+			if err != nil {
+				sRealDestHost = sRealDestAddr
+				sRealDestPort = ""
+			} else {
+				sRealDestPort = ":::" + sRealDestPort
+			}
+
 			visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, currContactProxyGroupName))
-			publisherPayloadConnSvcRules = append(publisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestAddr))
+			publisherPayloadConnSvcRules = append(publisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort))
 
 			visitorTunnelDedup := map[string]bool{}
 			visitorHTTPRedirectTunnelDedup := map[string]bool{}
