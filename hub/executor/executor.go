@@ -95,6 +95,7 @@ func ApplyConfig(cfg *config.Config, force bool) {
 	updateProxies(cfg.Proxies, cfg.Providers)
 	updateRules(cfg.Rules, cfg.SubRules, cfg.RuleProviders)
 	updateReverses(cfg.Reverses)
+	tunnel.RefreshInternalHTTP()
 	updateSniffer(cfg.Sniffer)
 	updateHosts(cfg.Hosts, cfg.HostsDialIPDirectlyTrie)
 	updateGeneral(cfg.General)

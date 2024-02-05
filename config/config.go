@@ -564,6 +564,9 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	pMap := make(map[string]*ClashrayNetPublisher)
 	config.Clashray.ClashrayNetPublishersMap = pMap
 
+	if rawCfg.Rule == nil {
+		rawCfg.Rule = make([]string, 0)
+	}
 	if rawCfg.SubRules == nil {
 		rawCfg.SubRules = make(map[string][]string)
 	}
@@ -604,6 +607,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 		currContactProxyGroupName := "clashray-net-" + p.Name + "-contact"
 		payloadConnRuleName := "clashray-net-" + p.Name + "-payload-conn-rule"
+		payloadConnFinalRuleName := "clashray-net-" + p.Name + "-payload-conn-rule-final"
 
 		var newProxyGroup map[string]interface{}
 		if isVisitorAndNotCurrentPublisher {
@@ -639,7 +643,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 				currLanContactListenerName := currLanContactName
 				currLanContactListener := map[string]interface{}{}
 				currLanContactListener["name"] = currLanContactListenerName
-				currLanContactListener["rule"] = payloadConnRuleName
+				currLanContactListener["rule"] = payloadConnFinalRuleName
 				switch fullLanContact["type"] {
 				case "vmess":
 					currLanContactListener["type"] = "vmess"
@@ -724,7 +728,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 				publisherReverses = append(publisherReverses, T.ReverseConf{
 					ReverseIdentDomain: rc.ReverseIdentDomain,
 					BridgeConnSubRule:  publisherBridgeConnRuleName,
-					PayloadConnSubRule: payloadConnRuleName,
+					PayloadConnSubRule: payloadConnFinalRuleName,
 					WorkerNum:          rc.WorkerNum,
 					RetryDelayMillisec: rc.RetryDelayMillisec,
 				})
@@ -823,7 +827,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 						currListener["port"] = vtListenPort
 						currListener["network"] = []string{"tcp"}
 						currListener["target"] = sHost + ":" + vtListenPortStr
-						currListener["rule"] = payloadConnRuleName
+						currListener["rule"] = payloadConnFinalRuleName
 					}
 					visitorTunnelDedup[vtListenHost+":"+vtListenPortStr] = true
 
@@ -861,7 +865,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 							currListener["network"] = []string{"tcp"}
 							// TODO: ?
 							currListener["target"] = httpRedirectHost + ":" + httpRedirectListenPortStr
-							currListener["rule"] = payloadConnRuleName
+							currListener["rule"] = payloadConnFinalRuleName
 						}
 						visitorHTTPRedirectTunnelDedup[httpRedirectHost+":"+httpRedirectListenPortStr] = true
 
@@ -893,13 +897,18 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			)
 		}
 		if isVisitorAndNotCurrentPublisher {
+			visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", strings.TrimPrefix(p.ContactHealthcheckURL, "http://"), currContactProxyGroupName))
+			visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", strings.TrimPrefix(p.ContactSendURL, "http://"), currContactProxyGroupName))
 			payloadConnSubRule = append(payloadConnSubRule, visitorNotPublisherPayloadConnSvcRules...)
 		}
 
-		payloadConnSubRule = append(payloadConnSubRule, "MATCH,REJECT")
+		payloadConnFinalSubRule := []string{}
+		payloadConnFinalSubRule = append(payloadConnFinalSubRule, "SUB-RULE,(NETWORK,tcp),"+payloadConnRuleName, "MATCH,REJECT")
 
 		if isVisitor || isCurrentPublisher {
 			rawCfg.SubRules[payloadConnRuleName] = payloadConnSubRule
+			rawCfg.SubRules[payloadConnFinalRuleName] = payloadConnFinalSubRule
+			rawCfg.Rule = append([]string{"SUB-RULE,(NETWORK,tcp)," + payloadConnRuleName}, rawCfg.Rule...)
 		}
 
 		if isCurrentPublisher {
@@ -916,7 +925,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		}
 	}
 
-	if publisherEverMatched && config.Clashray.ClashrayNetCurrAsPublisher != "" {
+	if !publisherEverMatched && config.Clashray.ClashrayNetCurrAsPublisher != "" {
 		log.Warnln("clashray-net: warn: ClashrayNetCurrAsPublisher [%s] never matched", config.Clashray.ClashrayNetCurrAsPublisher)
 	}
 

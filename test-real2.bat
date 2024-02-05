@@ -3,7 +3,7 @@
 
 # ./build.sh
 go build -v -o ./clashmain.exe
-./clashmain.exe -d ./test-config/real
+./clashmain.exe -d ./test-config/real2
 
 exit 0
 :runbat_start
