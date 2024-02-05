@@ -513,15 +513,7 @@ func handleTCPConn(connCtx C.ConnContext) {
 	}
 
 	dialMetadata := metadata
-	if len(metadata.Host) > 0 {
-		if node, ok := resolver.DefaultHosts.Search(metadata.Host, false); ok {
-			if dstIp, _ := node.RandIP(); !FakeIPRange().Contains(dstIp) {
-				dialMetadata.DstIP = dstIp
-				dialMetadata.DNSMode = C.DNSHosts
-				dialMetadata = dialMetadata.Pure()
-			}
-		}
-	}
+	// shunf4 mod: do not resolve hosts in hosts file before dial
 
 	var peekBytes []byte
 	var peekLen int
