@@ -582,6 +582,9 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	if rawCfg.Reverses == nil {
 		rawCfg.Reverses = make([]T.ReverseConf, 0)
 	}
+	if rawCfg.Hosts == nil {
+		rawCfg.Hosts = make(map[string]any)
+	}
 
 	publisherEverMatched := false
 
