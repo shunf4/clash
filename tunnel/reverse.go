@@ -24,6 +24,35 @@ var (
 	reverseFirstStart bool = true
 )
 
+type ClashrayReverseContact struct {
+	ReverseIdentDomain string `yaml:"reverse-ident-domain"`
+	BridgeConnProxy    string `yaml:"bridge-conn-proxy"`
+	VisitorProxy       string `yaml:"visitor-proxy"`
+	// WorkerNum currently is not used.
+	WorkerNum          int `yaml:"worker-num"`
+	RetryDelayMillisec int `yaml:"retry-delay-millisec"`
+}
+
+type ClashrayNetPublisher struct {
+	Name                              string                   `yaml:"name"`
+	ContactProxyGroupFallbackIsLazy   bool                     `yaml:"contact-proxy-group-fallback-is-lazy"`
+	ContactProxyGroupFallbackInterval int                      `yaml:"contact-proxy-group-fallback-interval"`
+	ContactHealthcheckURL             string                   `yaml:"contact-healthcheck-url"`
+	ContactSendURL                    string                   `yaml:"contact-send-url"`
+	LanContactsCommonFields           map[string]interface{}   `yaml:"lan-contacts-common-fields"`
+	LanContacts                       []map[string]interface{} `yaml:"lan-contacts"`
+	ReverseContacts                   []ClashrayReverseContact `yaml:"reverse-contacts"`
+	Services                          []string                 `yaml:"services"`
+}
+
+type Clashray struct {
+	ClashrayNetCurrAsPublisher string                 `yaml:"clashray-net-curr-as-publisher"`
+	ClashrayNetCurrIsAsVisitor bool                   `yaml:"clashray-net-curr-is-as-visitor"`
+	ClashraySendDir            string                 `yaml:"clashray-send-dir"`
+	ClashrayNetPublishers      []ClashrayNetPublisher `yaml:"clashray-net-publishers"`
+	ClashrayNetPublishersMap   map[string]*ClashrayNetPublisher
+}
+
 type ReverseConf struct {
 	ReverseIdentDomain string `yaml:"reverse-ident-domain"`
 	BridgeConnSubRule  string `yaml:"bridge-conn-sub-rule"`
@@ -136,7 +165,7 @@ func RestartReverse(cfgList []ReverseConf) {
 					case <-ctx.Done():
 						log.Debugln("reverse: MuxServerWorker %p: got ctx.Done()", w)
 						conn1.Close()
-						continue reverseRetry
+						break reverseRetry
 					default:
 						_, err := muxServerHandleFrame(w, conn1)
 						if err != nil {
@@ -205,7 +234,7 @@ func muxServerGetSession(w *MuxServerWorker, sessionID uint16) (*MuxSession, boo
 
 	result, found := w.sessions[sessionID]
 	if found {
-		log.Debugln("get session %d", sessionID)
+		// log.Debugln("get session %d", sessionID)
 	} else {
 		log.Debugln("warn: not found session %d", sessionID)
 	}
@@ -262,7 +291,7 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 		}
 		return f, nil
 	case SessionStatusKeep:
-		log.Debugln("server worker %p handling SessionStatusKeep", w)
+		// log.Debugln("server worker %p handling SessionStatusKeep", w)
 		if (f.Option & OptionData) == 0 {
 			return f, nil
 		}

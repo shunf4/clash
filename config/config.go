@@ -175,34 +175,6 @@ type Experimental struct {
 	QUICGoDisableECN bool     `yaml:"quic-go-disable-ecn"`
 }
 
-type ClashrayReverseContact struct {
-	ReverseIdentDomain string `yaml:"reverse-ident-domain"`
-	BridgeConnProxy    string `yaml:"bridge-conn-proxy"`
-	VisitorProxy       string `yaml:"visitor-proxy"`
-	// WorkerNum currently is not used.
-	WorkerNum          int `yaml:"worker-num"`
-	RetryDelayMillisec int `yaml:"retry-delay-millisec"`
-}
-
-type ClashrayNetPublisher struct {
-	Name                              string                   `yaml:"name"`
-	ContactProxyGroupFallbackIsLazy   bool                     `yaml:"contact-proxy-group-fallback-is-lazy"`
-	ContactProxyGroupFallbackInterval int                      `yaml:"contact-proxy-group-fallback-interval"`
-	ContactHealthcheckURL             string                   `yaml:"contact-healthcheck-url"`
-	ContactSendURL                    string                   `yaml:"contact-send-url"`
-	LanContactsCommonFields           map[string]interface{}   `yaml:"lan-contacts-common-fields"`
-	LanContacts                       []map[string]interface{} `yaml:"lan-contacts"`
-	ReverseContacts                   []ClashrayReverseContact `yaml:"reverse-contacts"`
-	Services                          []string                 `yaml:"services"`
-}
-
-type Clashray struct {
-	ClashrayNetCurrAsPublisher string                 `yaml:"clashray-net-curr-as-publisher"`
-	ClashrayNetCurrIsAsVisitor bool                   `yaml:"clashray-net-curr-is-as-visitor"`
-	ClashrayNetPublishers      []ClashrayNetPublisher `yaml:"clashray-net-publishers"`
-	ClashrayNetPublishersMap   map[string]*ClashrayNetPublisher
-}
-
 // Config is mihomo config manager
 type Config struct {
 	General                 *General
@@ -222,7 +194,7 @@ type Config struct {
 	RuleProviders           map[string]providerTypes.RuleProvider
 	Tunnels                 []LC.Tunnel
 	Reverses                []T.ReverseConf
-	Clashray
+	T.Clashray
 	Sniffer *Sniffer
 	TLS     *TLS
 }
@@ -380,9 +352,10 @@ type RawConfig struct {
 
 	ClashForAndroid RawClashForAndroid `yaml:"clash-for-android" json:"clash-for-android"`
 
-	ClashrayNetCurrAsPublisher string                 `yaml:"clashray-net-curr-as-publisher"`
-	ClashrayNetCurrIsAsVisitor bool                   `yaml:"clashray-net-curr-is-as-visitor"`
-	ClashrayNetPublishers      []ClashrayNetPublisher `yaml:"clashray-net-publishers"`
+	ClashrayNetCurrAsPublisher string                   `yaml:"clashray-net-curr-as-publisher"`
+	ClashrayNetCurrIsAsVisitor bool                     `yaml:"clashray-net-curr-is-as-visitor"`
+	ClashraySendDir            string                   `yaml:"clashray-send-dir"`
+	ClashrayNetPublishers      []T.ClashrayNetPublisher `yaml:"clashray-net-publishers"`
 }
 
 type GeoXUrl struct {
@@ -560,8 +533,9 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 	config.Clashray.ClashrayNetCurrAsPublisher = rawCfg.ClashrayNetCurrAsPublisher
 	config.Clashray.ClashrayNetCurrIsAsVisitor = rawCfg.ClashrayNetCurrIsAsVisitor
+	config.Clashray.ClashraySendDir = rawCfg.ClashraySendDir
 	config.Clashray.ClashrayNetPublishers = rawCfg.ClashrayNetPublishers
-	pMap := make(map[string]*ClashrayNetPublisher)
+	pMap := make(map[string]*T.ClashrayNetPublisher)
 	config.Clashray.ClashrayNetPublishersMap = pMap
 
 	if rawCfg.Rule == nil {
