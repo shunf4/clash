@@ -719,13 +719,49 @@ func PatchTunnel(tunnels []LC.Tunnel, tunnel C.Tunnel) {
 	}
 }
 
-func PatchInboundListeners(newListenerMap map[string]C.InboundListener, tunnel C.Tunnel, dropOld bool) {
+var lastListenerMap map[string]C.InboundListener
+var lastTunnel C.Tunnel
+
+func saveLastInboundListenerData(listenerMap map[string]C.InboundListener, tunnel C.Tunnel) {
+	inboundMux.Lock()
+	defer inboundMux.Unlock()
+
+	lastListenerMap = listenerMap
+	lastTunnel = tunnel
+}
+
+func PatchInboundListenersLast(dropOld bool, forceRelisten bool) {
+	listenerRawCfgMapMutex.Lock()
+	defer listenerRawCfgMapMutex.Unlock()
+
+	lastListenerMapFreshNew := make(map[string]C.InboundListener)
+	for k, v := range lastListenerMap {
+		rawMap, found := listenerRawCfgMap[v]
+		var err error
+		if found {
+			var freshNewListener C.InboundListener
+			freshNewListener, err = ParseListener(rawMap)
+			if err != nil {
+				log.Warnln("PatchInboundListenersLast: rebuilding listener %s: %v", k, err)
+			} else {
+				lastListenerMapFreshNew[k] = freshNewListener
+			}
+		} else {
+			log.Warnln("PatchInboundListenersLast: key %s not found in listenerRawCfgMap", k)
+		}
+	}
+	PatchInboundListeners(lastListenerMapFreshNew, lastTunnel, dropOld, forceRelisten)
+}
+
+func PatchInboundListeners(newListenerMap map[string]C.InboundListener, tunnel C.Tunnel, dropOld bool, forceRelisten bool) {
+	saveLastInboundListenerData(newListenerMap, tunnel)
+
 	inboundMux.Lock()
 	defer inboundMux.Unlock()
 
 	for name, newListener := range newListenerMap {
 		if oldListener, ok := inboundListeners[name]; ok {
-			if !oldListener.Config().Equal(newListener.Config()) {
+			if forceRelisten || !oldListener.Config().Equal(newListener.Config()) {
 				_ = oldListener.Close()
 			} else {
 				continue

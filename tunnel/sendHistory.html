@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>Send History of {{ .ClashraySendPublisherName }}</title>
+  <style>
+
+    .status-busy {
+      color: black;
+    }
+
+    .status-success {
+      color: green;
+    }
+
+    .status-fail {
+      color: red;
+    }
+
+    .copy-link {
+      display: none;
+    }
+
+    .copy-link.withjs {
+      display: inline;
+    }
+    
+  </style>
+</head>
+
+<body>
+  
+  {{ range $i, $h := .HistoryList }}
+  {{ if ne $i 0 }}
+  <hr/>
+  {{ end }}
+  <div style="width: 100%">
+  <span>{{ if ne .Sender "" }}Sender: {{ .Sender }}{{ else }}&emsp;{{ end }}</span>
+  <span style="float:right">{{ .Timestamp }}</span>
+  <p><pre>{{ .Summary }}</pre></p>
+  {{ if isPicture $h }}
+  <a target="_blank" href="/file/{{ URLEncode .FileName }}"><img src="/file/{{ URLEncode .FileName }}" style="max-width: 10em; max-height: 10em;" /></a>
+  {{ end }}
+  <p><a target="_blank" href="/file/{{ URLEncode .FileName }}">Go ({{ ByteCountIEC .FileSize }})</a>{{ if eq .SendType "text" }}&emsp;&emsp;<a href="javascript:void(0)" class="copy-link" data-file-link="/file/{{ URLEncode .FileName }}">Copy</a>&emsp;<span></span>{{ end }}</p>
+  </div>
+  {{ else }}
+  <p>No send history.</p>
+  {{ end }}
+
+  <script>
+    const textCopyCached = {};
+
+    const copyText = async (data, statusTextEl) => {
+      statusTextEl.textContent = "Copying...";
+      statusTextEl.classList = ["status-busy"];
+      try {
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(data);
+          statusTextEl.textContent = "Succeeded";
+          statusTextEl.classList = ["status-success"];
+        } else {
+          const textArea = document.createElement('textarea');
+          textArea.style.top = "0";
+          textArea.style.left = "0";
+          textArea.style.position = "fixed";
+          textArea.value = data;
+          textArea.style.opacity = 0;
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          const result = document.execCommand('copy');
+          textArea.remove();
+          if (result === false) {
+            throw { message: 'unsuccessful' };
+          }
+          statusTextEl.textContent = "Succeeded";
+          statusTextEl.classList = ["status-success"];
+        }
+      } catch (err) {
+        console.error("write clipboard error", err);
+        statusTextEl.textContent = "Failed";
+        statusTextEl.classList = ["status-fail"];
+      }
+    }
+
+    Array.from(document.querySelectorAll(".copy-link")).forEach(async el => {
+      el.classList.add("withjs");
+      const fileLink = el.getAttribute("data-file-link");
+      el.addEventListener("click", async (e) => {
+        e.preventDefault();
+        const cached = textCopyCached[fileLink];
+        if (cached !== undefined) {
+          await copyText(cached, el.nextElementSibling);
+          return;
+        }
+
+        fetch(fileLink, {
+          // mode: "no-cors",
+        }).then(resp => {
+          resp.text().then(async data => {
+            textCopyCached[fileLink] = data;
+            await copyText(data, el.nextElementSibling);
+          });
+        });
+      });
+    });
+  </script>
+
+</body>
+
+</html>

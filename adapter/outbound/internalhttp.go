@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strings"
 
 	"github.com/metacubex/mihomo/component/dialer"
 	C "github.com/metacubex/mihomo/constant"
@@ -24,10 +23,10 @@ func (ih *InternalHTTP) DialContext(ctx context.Context, metadata *C.Metadata, o
 func (ih *InternalHTTP) DialContextWithDialer(ctx context.Context, dialer C.Dialer, metadata *C.Metadata) (_ C.Conn, err error) {
 	target := metadata.Host
 	var conn net.Conn
-	if target, found := strings.CutPrefix(target, "CLASHRAY-REDIRECT-"); found {
-		conn = tunnel.BgHandleInternalHTTPClashrayRedirect(target)
+	if target == "CLASHRAY-HTTP-REDIRECT" {
+		conn = tunnel.BgHandleInternalHTTPClashrayHTTPRedirect()
 	} else if target == "CLASHRAY-TEST" {
-		conn = tunnel.BgHandleInternalHTTPClashrayTest()
+		conn = tunnel.BgHandleInternalHTTPClashrayTest(metadata)
 	} else if target == "CLASHRAY-SEND" {
 		conn = tunnel.BgHandleInternalHTTPClashraySend()
 	} else {

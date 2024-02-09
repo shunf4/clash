@@ -1,72 +1,278 @@
 package tunnel
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
+	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/aohorodnyk/mimeheader"
 	"github.com/flytam/filenamify"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/go-chi/render"
+	"github.com/gofrs/uuid/v5"
+	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
 )
 
 var (
-	internalHTTPClashraySend     *chi.Mux
-	internalHTTPClashrayRedirect *chi.Mux
-	internalHTTPClashrayTest     *chi.Mux
-	internalHTTPMutex            sync.Mutex
+	internalHTTPClashraySend         *chi.Mux
+	internalHTTPClashrayHTTPRedirect *chi.Mux
+	internalHTTPClashrayTest         *chi.Mux
+	internalHTTPMutex                sync.Mutex
+	clashraySendHistoryMutex         sync.Mutex
+	clashraySendTextMutex            sync.Mutex
 )
+
+//go:embed send.html
+var sendHTMLBytes []byte
+
+//go:embed sendHistory.html
+var historyHTMLBytes []byte
+
+type historyData struct {
+	Timestamp string
+	SendType  string
+	Summary   string
+	Sender    string
+	FileName  string
+	FileSize  uint64
+}
+
+func neuter(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/") {
+			http.NotFound(w, r)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
 
 func RefreshInternalHTTP(clashrayConfig *Clashray) {
 	internalHTTPMutex.Lock()
 	defer internalHTTPMutex.Unlock()
 
+	sendHTMLTmpl, err := template.New("send").Parse(string(sendHTMLBytes))
+	if err != nil {
+		panic(err)
+	}
+
+	historyHTMLTmpl, err := template.New("history").Funcs(template.FuncMap{
+		"ByteCountIEC": func(b uint64) string {
+			const unit = 1024
+			if b < unit {
+				return fmt.Sprintf("%d B", b)
+			}
+			div, exp := int64(unit), 0
+			for n := b / unit; n >= unit; n /= unit {
+				div *= unit
+				exp++
+			}
+			return fmt.Sprintf("%.1f %ciB",
+				float64(b)/float64(div), "KMGTPE"[exp])
+		},
+		"URLEncode": url.QueryEscape,
+		"isPicture": func(d historyData) bool {
+			fileNameLower := strings.ToLower(d.FileName)
+			return d.SendType == "file" && (strings.HasSuffix(fileNameLower, ".bmp") ||
+				strings.HasSuffix(fileNameLower, ".png") ||
+				strings.HasSuffix(fileNameLower, ".jpg") ||
+				strings.HasSuffix(fileNameLower, ".jpeg") ||
+				strings.HasSuffix(fileNameLower, ".webp") ||
+				strings.HasSuffix(fileNameLower, ".apng") ||
+				strings.HasSuffix(fileNameLower, ".avif") ||
+				strings.HasSuffix(fileNameLower, ".gif") ||
+				strings.HasSuffix(fileNameLower, ".svg") ||
+				strings.HasSuffix(fileNameLower, ".tif") ||
+				strings.HasSuffix(fileNameLower, ".tiff"))
+		},
+	}).Parse(string(historyHTMLBytes))
+	if err != nil {
+		panic(err)
+	}
+
 	if clashrayConfig.ClashraySendDir != "" {
 		os.MkdirAll(clashrayConfig.ClashraySendDir, os.FileMode(0o750))
+		hf, err := os.OpenFile(filepath.Join(clashrayConfig.ClashraySendDir, "history.json"), os.O_CREATE, os.FileMode(0o640))
+		if err != nil {
+
+		} else {
+			hf.Close()
+		}
 
 		internalHTTPClashraySend = chi.NewRouter()
 		internalHTTPClashraySend.Use(middleware.Logger)
+
+		internalHTTPClashraySend.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			sendHTMLTmpl.Execute(w, map[string]any{
+				"ClashraySendPublisherName": clashrayConfig.ClashrayNetCurrAsPublisher,
+			})
+		})
+
+		saveHistory := func(sendType string, summary string, sender string, fileName string, fileSize uint64, sendTime time.Time) error {
+			clashraySendHistoryMutex.Lock()
+			defer clashraySendHistoryMutex.Unlock()
+
+			historyJsonBytes, err := os.ReadFile(filepath.Join(clashrayConfig.ClashraySendDir, "history.json"))
+			var historyList []historyData
+			if err != nil {
+				historyList = make([]historyData, 0)
+			} else {
+				err = json.Unmarshal(historyJsonBytes, &historyList)
+				if err != nil {
+					historyList = make([]historyData, 0)
+				}
+			}
+			if len(historyList) >= 30 {
+				historyList = historyList[:29]
+			}
+			historyList = append([]historyData{
+				{
+					Timestamp: sendTime.Format("2006-01-02 15:04:05 Z07:00"),
+					SendType:  sendType,
+					Summary:   summary,
+					Sender:    sender,
+					FileName:  fileName,
+					FileSize:  fileSize,
+				},
+			}, historyList...)
+			historyJsonBytesAfterInsert, err := json.Marshal(historyList)
+			if err != nil {
+				return fmt.Errorf("json marshal error: %w", err)
+			}
+			err = os.WriteFile(filepath.Join(clashrayConfig.ClashraySendDir, "history.json"), historyJsonBytesAfterInsert, os.FileMode(0o640))
+			if err != nil {
+				return fmt.Errorf("write history.json error: %w", err)
+			}
+			return nil
+		}
+
+		saveText := func(textBytes []byte, sender string) error {
+			clashraySendTextMutex.Lock()
+			defer clashraySendTextMutex.Unlock()
+
+			if len(textBytes) > 1*1024*1024*1024 {
+				return fmt.Errorf("text too big")
+			}
+
+			err := os.WriteFile(filepath.Join(clashrayConfig.ClashraySendDir, "text.txt"), textBytes, 0o640)
+
+			if err != nil {
+				return err
+			}
+
+			thisUUID, err := uuid.NewV4()
+			if err != nil {
+				return fmt.Errorf("generating uuid: %w", err)
+			}
+
+			fileName := "text-" + thisUUID.String() + ".txt"
+
+			err = os.WriteFile(filepath.Join(clashrayConfig.ClashraySendDir, fileName), textBytes, 0o640)
+
+			if err != nil {
+				return fmt.Errorf("saving file: %w", err)
+			}
+
+			runes := []rune(string(textBytes))
+			ellipsis := "..."
+			runeCut := 400
+			if runeCut > len(runes) {
+				ellipsis = ""
+				runeCut = len(runes)
+			}
+			err = saveHistory("text", string(runes[:runeCut])+ellipsis, sender, fileName, uint64(len(textBytes)), time.Now())
+
+			if err != nil {
+				return fmt.Errorf("saving history: %w", err)
+			}
+
+			return nil
+		}
+
 		internalHTTPClashraySend.Post("/", func(w http.ResponseWriter, r *http.Request) {
 			ct := r.Header.Get("Content-Type")
-			// RFC 7231, section 3.1.1.5 - empty type
-			//   MAY be treated as application/octet-stream
 			if ct == "" {
-				ct = "application/octet-stream"
+				ct = "text/plain"
 			}
 			ct, _, err := mime.ParseMediaType(ct)
 			if err != nil {
 				internalHttpError(w, r, http.StatusBadRequest, "Could not media type: %v", err)
 				return
 			}
+
+			sender := r.Header.Get("Clashray-Sender")
+			sendTime := time.Now()
+
 			switch {
-			case ct == "text/plain":
+			case ct == "text/plain" || ct == "application/octet-stream":
 				textBytes, err := io.ReadAll(io.LimitReader(r.Body, 1*1024*1024*1024))
 				if err != nil {
-					internalHttpError(w, r, http.StatusBadRequest, "Could not process text: %v", err)
+					internalHttpError(w, r, http.StatusBadRequest, "Could not process text", err)
 					return
 				}
-				os.WriteFile(filepath.Join(clashrayConfig.ClashraySendDir, "text.txt"), textBytes, 0o640)
+				err = saveText(textBytes, sender)
+				if err != nil {
+					internalHttpError(w, r, http.StatusBadRequest, "Error saving text", err)
+					return
+				}
+				render.PlainText(w, r, "OK")
+				return
+			case ct == "application/x-www-form-urlencoded":
+				err = r.ParseForm()
+				if err != nil {
+					internalHttpError(w, r, http.StatusBadRequest, "Could not parse form", err)
+					return
+				}
+				if r.FormValue("sender") != "" {
+					sender = r.FormValue("sender")
+				}
+				err = saveText([]byte(r.FormValue("text")), sender)
+				if err != nil {
+					internalHttpError(w, r, http.StatusBadRequest, "Error saving text", err)
+					return
+				}
 				render.PlainText(w, r, "OK")
 				return
 			}
 
 			err = r.ParseMultipartForm(20 * 1024 * 1024)
 			if err != nil {
-				internalHttpError(w, r, http.StatusBadRequest, "Could not parse multipart form: %v", err)
+				internalHttpError(w, r, http.StatusBadRequest, "Could not parse multipart form", err)
+				return
+			}
+			if r.FormValue("sender") != "" {
+				sender = r.FormValue("sender")
+			}
+			if r.FormValue("text") != "" {
+				err = saveText([]byte(r.FormValue("text")), sender)
+				if err != nil {
+					internalHttpError(w, r, http.StatusBadRequest, "Error saving text", err)
+					return
+				}
+				render.PlainText(w, r, "OK")
 				return
 			}
 			file, fileHeader, err := r.FormFile("file")
 			if err != nil {
-				internalHttpError(w, r, http.StatusBadRequest, "Invalid file: %v", err)
+				internalHttpError(w, r, http.StatusBadRequest, "Invalid file", err)
 				return
 			}
 			defer file.Close()
@@ -78,22 +284,36 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 				Replacement: "_",
 				MaxLength:   60,
 			})
+			if err != nil {
+				internalHttpError(w, r, http.StatusInternalServerError, "Error during filename process", err)
+				return
+			}
 			if !filepath.IsLocal(safeName) {
 				safeName = filepath.Base(safeName) + "_"
 			}
-			if err != nil {
-				internalHttpError(w, r, http.StatusInternalServerError, "Error during filename process: %v", err)
-				return
+			if _, err := os.Stat(filepath.Join(clashrayConfig.ClashraySendDir, safeName)); err == nil {
+				safeNameExt := filepath.Ext(safeName)
+				safeNameWithoutExt := strings.TrimSuffix(safeName, safeNameExt)
+				safeName = safeNameWithoutExt + "_" + sendTime.Format("2006-01-02T15_04_05Z070000")
+				if safeNameExt != "" {
+					safeName += safeNameExt
+				}
 			}
+
 			outF, err := os.Create(filepath.Join(clashrayConfig.ClashraySendDir, safeName))
 			if err != nil {
-				internalHttpError(w, r, http.StatusInternalServerError, "Error during file creation: %v", err)
+				internalHttpError(w, r, http.StatusInternalServerError, "Error during file creation", err)
 				return
 			}
 			defer outF.Close()
-			_, err = io.Copy(outF, file)
+			fileActualSize, err := io.Copy(outF, file)
 			if err != nil {
-				internalHttpError(w, r, http.StatusInternalServerError, "Error during file write: %v", err)
+				internalHttpError(w, r, http.StatusInternalServerError, "Error during file write", err)
+				return
+			}
+			err = saveHistory("file", "File: "+safeName, sender, safeName, uint64(fileActualSize), sendTime)
+			if err != nil {
+				internalHttpError(w, r, http.StatusInternalServerError, "Error during updating history", err)
 				return
 			}
 			render.PlainText(w, r, "OK")
@@ -104,7 +324,7 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 			at := mimeheader.ParseAcceptHeader(atRaw)
 			f, err := os.Open(filepath.Join(clashrayConfig.ClashraySendDir, "text.txt"))
 			if err != nil {
-				internalHttpError(w, r, http.StatusInternalServerError, "Error during file open: %v", err)
+				internalHttpError(w, r, http.StatusInternalServerError, "Error during file open", err)
 				return
 			}
 			defer f.Close()
@@ -112,25 +332,89 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 				_, err = io.Copy(w, io.LimitReader(f, 1*1024*1024*1024))
 				if err != nil {
-					internalHttpError(w, r, http.StatusInternalServerError, "Error during stream copy: %v", err)
+					internalHttpError(w, r, http.StatusInternalServerError, "Error during stream copy", err)
 					return
 				}
+				return
+			}
+			// if at.Match("application/json") {
+			// 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			// 	fileBytes, err := io.ReadAll(io.LimitReader(f, 1*1024*1024*1024))
+			// 	if err != nil {
+			// 		internalHttpError(w, r, http.StatusInternalServerError, "Error during file read", err)
+			// 		return
+			// 	}
+			// 	render.JSON(w, r, map[string]interface{}{
+			// 		"data": fileBytes,
+			// 	})
+			// 	return
+			// }
+			internalHttpError(w, r, http.StatusBadRequest, "No proper Accept type received")
+		})
+
+		internalHTTPClashraySend.Post("/text", func(w http.ResponseWriter, r *http.Request) {
+			textBytes, err := io.ReadAll(io.LimitReader(r.Body, 1*1024*1024*1024))
+			if err != nil {
+				internalHttpError(w, r, http.StatusBadRequest, "Could not process text", err)
+				return
+			}
+			err = saveText(textBytes, r.Header.Get("Clashray-Sender"))
+			if err != nil {
+				internalHttpError(w, r, http.StatusBadRequest, "Error saving text", err)
+				return
+			}
+			render.PlainText(w, r, "OK")
+		})
+
+		internalHTTPClashraySend.Get("/history", func(w http.ResponseWriter, r *http.Request) {
+			atRaw := r.Header.Get("Accept")
+			at := mimeheader.ParseAcceptHeader(atRaw)
+
+			clashraySendHistoryMutex.Lock()
+			defer clashraySendHistoryMutex.Unlock()
+
+			historyJsonBytes, err := os.ReadFile(filepath.Join(clashrayConfig.ClashraySendDir, "history.json"))
+			var historyList []historyData
+			if err != nil {
+				historyList = make([]historyData, 0)
+			} else {
+				err = json.Unmarshal(historyJsonBytes, &historyList)
+				if err != nil {
+					historyList = make([]historyData, 0)
+				}
+			}
+
+			if at.Match("text/html") || at.Match("application/xhtml+xml") {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				historyHTMLTmpl.Execute(w, map[string]any{
+					"ClashraySendPublisherName": clashrayConfig.ClashrayNetCurrAsPublisher,
+					"HistoryList":               historyList,
+				})
 				return
 			}
 			if at.Match("application/json") {
 				w.Header().Set("Content-Type", "application/json; charset=utf-8")
-				fileBytes, err := io.ReadAll(io.LimitReader(f, 1*1024*1024*1024))
+				_, err = io.Copy(w, bytes.NewBuffer(historyJsonBytes))
 				if err != nil {
-					internalHttpError(w, r, http.StatusInternalServerError, "Error during file read: %v", err)
+					internalHttpError(w, r, http.StatusInternalServerError, "Error during stream copy", err)
 					return
 				}
-				render.JSON(w, r, map[string]interface{}{
-					"data": fileBytes,
-				})
 				return
 			}
+			if at.Match("text/plain") {
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				_, err = io.Copy(w, bytes.NewBuffer(historyJsonBytes))
+				if err != nil {
+					internalHttpError(w, r, http.StatusInternalServerError, "Error during stream copy", err)
+					return
+				}
+				return
+			}
+
 			internalHttpError(w, r, http.StatusBadRequest, "No proper Accept type received")
 		})
+
+		internalHTTPClashraySend.Get("/file/*", neuter(http.StripPrefix("/file/", http.FileServer(http.Dir(clashrayConfig.ClashraySendDir)))).ServeHTTP)
 	} else {
 		internalHTTPClashraySend = chi.NewRouter()
 		internalHTTPClashraySend.Use(middleware.Logger)
@@ -139,31 +423,106 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 		}))
 	}
 
-	internalHTTPClashrayRedirect = chi.NewRouter()
-	internalHTTPClashrayRedirect.Use(middleware.Logger)
-	internalHTTPClashrayRedirect.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		targetHostRaw := r.Context().Value("ClashrayRedirectHost")
-		targetHost, hostConvertOK := targetHostRaw.(string)
-		if !hostConvertOK || targetHost == "" {
-			internalHttpError(w, r, http.StatusInternalServerError, "Bad redirect url")
+	internalHTTPClashrayHTTPRedirect = chi.NewRouter()
+	internalHTTPClashrayHTTPRedirect.Use(middleware.Logger)
+	internalHTTPClashrayHTTPRedirect.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		// From https://github.com/go-chi/hostrouter/blob/master/hostrouter.go
+		parseForwarded := func(forwarded string) (addr, proto, host string) {
+			if forwarded == "" {
+				return
+			}
+			for _, forwardedPair := range strings.Split(forwarded, ";") {
+				if tv := strings.SplitN(forwardedPair, "=", 2); len(tv) == 2 {
+					token, value := tv[0], tv[1]
+					token = strings.TrimSpace(token)
+					value = strings.TrimSpace(strings.Trim(value, `"`))
+					switch strings.ToLower(token) {
+					case "for":
+						addr = value
+					case "proto":
+						proto = value
+					case "host":
+						host = value
+					}
+
+				}
+			}
 			return
 		}
-		http.Redirect(w, r, targetHost+r.URL.RequestURI(), http.StatusTemporaryRedirect)
+
+		requestHost := func(r *http.Request) (host string) {
+			// not standard, but most popular
+			host = r.Header.Get("X-Forwarded-Host")
+			if host != "" {
+				return
+			}
+
+			// RFC 7239
+			host = r.Header.Get("Forwarded")
+			_, _, host = parseForwarded(host)
+			if host != "" {
+				return
+			}
+
+			// if all else fails fall back to request host
+			host = r.Host
+			return
+		}
+
+		rHost := requestHost(r)
+		targetHost, found := clashrayConfig.ClashrayHTTPRedirectMap[rHost]
+
+		if !found || targetHost == "" {
+			internalHttpError(w, r, http.StatusInternalServerError, "Redirect URL not found")
+			return
+		}
+		http.Redirect(w, r, "http://"+targetHost+r.URL.RequestURI(), http.StatusTemporaryRedirect)
+
 	})
 
 	internalHTTPClashrayTest = chi.NewRouter()
 	internalHTTPClashrayTest.Use(middleware.Logger)
+	internalHTTPClashrayTest.Use(cors.Handler(cors.Options{
+		AllowedOrigins: []string{"https://*", "http://*"},
+		// AllowOriginFunc:  func(r *http.Request, origin string) bool { return true },
+		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "Authorization"},
+		MaxAge:         300,
+	}))
+
 	internalHTTPClashrayTest.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		render.PlainText(w, r, "PONG")
+		respondMsg := "PONG"
+		viaBridgeRaw := r.Context().Value("ClashrayTestVia")
+		viaBridge, ok := viaBridgeRaw.(string)
+		if ok && viaBridge != "" {
+			respondMsg += " - Via: " + viaBridge
+		}
+		render.PlainText(w, r, respondMsg)
+	})
+
+	internalHTTPClashrayTest.Get("/currAsPublisher", func(w http.ResponseWriter, r *http.Request) {
+		respondMsg := clashrayConfig.ClashrayNetCurrAsPublisher
+		render.PlainText(w, r, respondMsg)
 	})
 
 }
 
-func internalHttpError(w http.ResponseWriter, r *http.Request, status int, errorMessageFormat string, v ...any) {
+func internalHttpError(w http.ResponseWriter, r *http.Request, status int, errorMessageFormatWithoutError string, v ...any) {
+	errorMessageFormat := errorMessageFormatWithoutError
+	userMsg := ""
+	if len(v) > 0 {
+		if _, isError := v[len(v)-1].(error); isError {
+			errorMessageFormat = errorMessageFormatWithoutError + ": %v"
+			userMsg = fmt.Sprintf(errorMessageFormatWithoutError, v[:len(v)-1]...)
+		}
+	}
 	m := fmt.Sprintf(errorMessageFormat, v...)
+	if userMsg == "" {
+		userMsg = m
+	}
 	log.Warnln("internalHTTP: " + m)
 	render.Status(r, http.StatusBadRequest)
-	render.JSON(w, r, m)
+	render.JSON(w, r, userMsg)
 }
 
 // Copied from GitHub
@@ -207,28 +566,30 @@ func BgHandleInternalHTTPClashraySend() net.Conn {
 	return conn1
 }
 
-func BgHandleInternalHTTPClashrayRedirect(targetHost string) net.Conn {
+func BgHandleInternalHTTPClashrayHTTPRedirect() net.Conn {
 	conn1, conn2 := net.Pipe()
 	go func() {
 		err := http.Serve(&singleConnListener{
 			conn: conn2,
 		}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r = r.WithContext(context.WithValue(r.Context(), "ClashrayRedirectHost", targetHost))
-			internalHTTPClashrayRedirect.ServeHTTP(w, r)
+			internalHTTPClashrayHTTPRedirect.ServeHTTP(w, r)
 		}))
 		if err != nil {
-			log.Warnln("internalHTTP: clashrayRedirect: handling targetHost=%s error: %v", targetHost, err)
+			log.Warnln("internalHTTP: clashrayRedirect: handling error: %v", err)
 		}
 	}()
 	return conn1
 }
 
-func BgHandleInternalHTTPClashrayTest() net.Conn {
+func BgHandleInternalHTTPClashrayTest(metadata *C.Metadata) net.Conn {
 	conn1, conn2 := net.Pipe()
 	go func() {
 		err := http.Serve(&singleConnListener{
 			conn: conn2,
-		}, internalHTTPClashrayTest)
+		}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r = r.WithContext(context.WithValue(r.Context(), "ClashrayTestVia", metadata.InName))
+			internalHTTPClashrayTest.ServeHTTP(w, r)
+		}))
 		if err != nil {
 			log.Warnln("internalHTTP: clashrayTest: handling error: %v", err)
 		}

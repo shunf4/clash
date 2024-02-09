@@ -2,11 +2,26 @@ package listener
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/metacubex/mihomo/common/structure"
 	C "github.com/metacubex/mihomo/constant"
 	IN "github.com/metacubex/mihomo/listener/inbound"
 )
+
+var (
+	listenerRawCfgMap      map[C.InboundListener]map[string]any
+	listenerRawCfgMapMutex sync.Mutex
+)
+
+func ParseListenersStart() {
+	listenerRawCfgMap = make(map[C.InboundListener]map[string]any)
+	listenerRawCfgMapMutex.Lock()
+}
+
+func ParseListenersEnd() {
+	listenerRawCfgMapMutex.Unlock()
+}
 
 func ParseListener(mapping map[string]any) (C.InboundListener, error) {
 	decoder := structure.NewDecoder(structure.Option{TagName: "inbound", WeaklyTypedInput: true, KeyReplacer: structure.DefaultKeyReplacer})
@@ -109,5 +124,6 @@ func ParseListener(mapping map[string]any) (C.InboundListener, error) {
 	default:
 		return nil, fmt.Errorf("unsupport proxy type: %s", proxyType)
 	}
+	listenerRawCfgMap[listener] = mapping
 	return listener, err
 }

@@ -94,7 +94,7 @@ func ApplyConfig(cfg *config.Config, force bool) {
 	updateUsers(cfg.Users)
 	updateProxies(cfg.Proxies, cfg.Providers)
 	updateRules(cfg.Rules, cfg.SubRules, cfg.RuleProviders)
-	updateReverses(cfg.Reverses)
+	updateReverses(cfg.Reverses, cfg.ReverseStopAfterErrorRetryCount, cfg.ReverseSeeAsErrorIfDisconnectInMillisec, cfg.ReverseEnableOnAndroidTypeTransports)
 	tunnel.RefreshInternalHTTP(&cfg.Clashray)
 	updateSniffer(cfg.Sniffer)
 	updateHosts(cfg.Hosts, cfg.HostsDialIPDirectlyTrie)
@@ -164,7 +164,7 @@ func GetGeneral() *config.General {
 }
 
 func updateListeners(general *config.General, listeners map[string]C.InboundListener, force bool) {
-	listener.PatchInboundListeners(listeners, tunnel.Tunnel, true)
+	listener.PatchInboundListeners(listeners, tunnel.Tunnel, true, false)
 	if !force {
 		return
 	}
@@ -273,8 +273,8 @@ func updateRules(rules []C.Rule, subRules map[string][]C.Rule, ruleProviders map
 	tunnel.UpdateRules(rules, subRules, ruleProviders)
 }
 
-func updateReverses(reverses []tunnel.ReverseConf) {
-	tunnel.RestartReverse(reverses)
+func updateReverses(reverses []tunnel.ReverseConf, stopAfterErrRetryCount int, seeAsErrorIfDisconnectInMillisec int, enableOnAndroidTypeTransports []int) {
+	tunnel.RestartReverse(reverses, stopAfterErrRetryCount, seeAsErrorIfDisconnectInMillisec, enableOnAndroidTypeTransports, -2)
 }
 
 func loadProvider(pv provider.Provider) {

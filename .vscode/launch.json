@@ -10,7 +10,7 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/",
-            "args": ["-d", "${workspaceFolder}/test-config/real"]
+            "args": ["-d", "C:/Users/shunf4/RIVROOT/tmp/startclash-bin/"]
         }
     ]
 }

@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>Send To {{ .ClashraySendPublisherName }}</title>
+  <style>
+    h6 {}
+
+    div.dropzone {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: -999;
+      width: 100%;
+      height: 100%;
+    }
+
+    textarea.send-data-text {
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
+
+    .send-type-opt-group {
+      width: 100%;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      display: none;
+    }
+
+    .send-type-opt-group.show {
+      display: flex;
+    }
+
+    .send-type-opt {
+      flex-grow: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-top: 0.8em;
+      padding-bottom: 0.8em;
+      cursor: pointer;
+      border: 0.1em solid blue;
+    }
+
+    .send-type-opt.current {
+      cursor: inherit;
+      border: 0.1em solid lightgrey;
+    }
+
+    .send-type-opt-desc {
+      font-size: large;
+      text-decoration: underline;
+      color: blue;
+    }
+
+    .send-type-opt.current .send-type-opt-desc {
+      font-size: large;
+      text-decoration: inherit;
+      color: inherit;
+    }
+
+    .send-data-pane.withjs {
+      height: 9em;
+    }
+
+    .send-data-pane.hide {
+      display: none;
+    }
+
+    .send-data-pane.show {
+      display: block;
+    }
+
+    #sendDataImageContainer.hide {
+      display: none;
+    }
+
+    #sendDataImageEmptyPlaceholder.hide {
+      display: none;
+    }
+
+    button[type=submit] {
+      width: 7em;
+      height: 7em;
+      margin: 1em;
+    }
+
+    .send-pane-no-js-title {
+      margin-block-start: 0.05em;
+      margin-block-end: 0.05em;
+    }
+
+    .send-pane-no-js-title.hide {
+      display: none;
+    }
+
+    .img-to-send-preview {
+      max-width: 90%;
+      max-height: 7em;
+    }
+
+    .title-header {
+      word-break: break-all;
+    }
+
+    body {
+      margin: 0;
+    }
+
+    .page-container {
+      height: 100%;
+      width: 100%;
+      height: 100vh;
+      margin: 0;
+      box-sizing: border-box;
+      padding-left: 1em;
+      padding-right: 1em;
+
+      display: flex;
+      flex-direction: column;
+    }
+
+    .history-region {
+      flex-grow: 1;
+      padding-bottom: 1em;
+    }
+
+    .send-data-group {}
+
+    form {
+      height: 100%;
+    }
+
+    .send-pane-split {
+      height: 100%;
+      display: flex;
+      flex-direction: row;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .send-left {
+      flex: 1;
+      text-align: center;
+      padding-top: 1em;
+      padding-bottom: 1em;
+      box-sizing: border-box;
+      max-height: 9em;
+    }
+
+    #sendPaneText .send-left {
+      height: 9em;
+    }
+
+    .send-right {
+      flex: 0;
+      text-align: center;
+      box-sizing: border-box;
+    }
+
+    #sendDataFile {
+      width: 100%;
+      white-space: normal;
+      word-wrap: break-word;
+    }
+
+    #sendDataImageContainer {
+      height: 100%;
+    }
+  </style>
+</head>
+
+<body>
+  <div style="" class="dropzone"></div>
+
+  <div class="page-container">
+    <div class="header-region">
+      <h2 class="title-header">Send To {{ .ClashraySendPublisherName }}</h2>
+      <p id="currAsSender"></p>
+    </div>
+
+    <div class="history-region">
+      <iframe id="historyIframe" src="/history" style="height: 100%; width: 100%; box-sizing: border-box;">
+
+      </iframe>
+    </div>
+
+    <div class="bottom-send-region">
+      <div id="sendTypeOptGroup" class="send-type-opt-group">
+        <div id="sendTypeText" class="send-type-opt">
+          <div class="send-type-opt-desc">Text</div>
+        </div>
+        <div id="sendTypeImage" class="send-type-opt">
+          <div class="send-type-opt-desc">Image</div>
+        </div>
+        <div id="sendTypeFile" class="send-type-opt">
+          <div class="send-type-opt-desc">File</div>
+        </div>
+      </div>
+
+      <div class="send-data-group">
+        <div id="sendPaneText" class="send-data-pane">
+          <h4 class="send-pane-no-js-title">Send Text</h4>
+          <form enctype="multipart/form-data" method="post" action="/">
+            <input type="hidden" name="sender" id="sendSenderText" />
+            <div class="send-pane-split">
+              <div class="send-left">
+                <textarea id="sendDataText" name="text" placeholder="Paste Text Here..."
+                  class="send-data-text"></textarea>
+              </div>
+              <div class="send-right">
+                <button type="submit">Send</button>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div id="sendPaneImage" class="send-data-pane hide">
+          <h4 class="send-pane-no-js-title">Send Image</h4>
+          <form enctype="multipart/form-data" method="post" action="/">
+            <input type="hidden" name="sender" id="sendSenderImage" />
+            <div class="send-pane-split">
+              <div class="send-left">
+                <div id="sendDataImageContainer">
+
+                </div>
+                <div id="sendDataImageEmptyPlaceholder">
+                  No Image
+                </div>
+                <input id="sendDataImage" name="file" type="file" style="display: none;" />
+              </div>
+              <div class="send-right">
+                <button type="submit">Send</button>
+              </div>
+            </div>
+          </form>
+
+        </div>
+        <div id="sendPaneFile" class="send-data-pane">
+          <h4 class="send-pane-no-js-title">Send File</h4>
+          <form enctype="multipart/form-data" method="post" action="/">
+            <input type="hidden" name="sender" id="sendSenderFile" />
+            <div class="send-pane-split">
+              <div class="send-left">
+                <input id="sendDataFile" name="file" type="file" />
+              </div>
+              <div class="send-right">
+                <button type="submit">Send</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <script>
+    function generateUUID() { // Public Domain/MIT
+      const d = new Date().getTime();//Timestamp
+      const d2 = ((typeof performance !== 'undefined') && performance.now && (performance.now() * 1000)) || 0;//Time in microseconds since page-load or 0 if unsupported
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        const r = Math.random() * 16;//random number between 0 and 16
+        if (d > 0) {//Use timestamp until depleted
+          r = (d + r) % 16 | 0;
+          d = Math.floor(d / 16);
+        } else {//Use microseconds since page-load if supported
+          r = (d2 + r) % 16 | 0;
+          d2 = Math.floor(d2 / 16);
+        }
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+      });
+    }
+
+    const sendData = {};
+
+    const showEl = el => {
+      el.classList.add("show");
+      el.classList.remove("hide");
+    };
+
+    const hideEl = el => {
+      el.classList.remove("show");
+      el.classList.add("hide");
+    };
+
+    const activeEl = el => {
+      el.classList.add("current");
+    };
+
+    const inactiveEl = el => {
+      el.classList.remove("current");
+    };
+
+    const setSendType = (function () {
+      const sendTypeOptGroup = document.getElementById("sendTypeOptGroup");
+      showEl(sendTypeOptGroup);
+
+      const sText = document.getElementById("sendTypeText");
+      const sImage = document.getElementById("sendTypeImage");
+      const sFile = document.getElementById("sendTypeFile");
+
+      const pText = document.getElementById("sendPaneText");
+      const pImage = document.getElementById("sendPaneImage");
+      const pFile = document.getElementById("sendPaneFile");
+
+      [pText, pImage, pFile].forEach(el => el.classList.add('withjs'));
+
+      Array.from(document.getElementsByClassName("send-pane-no-js-title")).forEach(hideEl);
+
+      const selectFunc = (t) => {
+        inactiveEl(sText);
+        inactiveEl(sImage);
+        inactiveEl(sFile);
+
+        hideEl(pText);
+        hideEl(pImage);
+        hideEl(pFile);
+
+        if (t === "text") {
+          activeEl(sText);
+          showEl(pText);
+          sendData.type = t;
+        } else if (t === "image") {
+          activeEl(sImage);
+          showEl(pImage);
+          sendData.type = t;
+        } else if (t === "file") {
+          activeEl(sFile);
+          showEl(pFile);
+          sendData.type = t;
+        }
+      };
+
+      sText.onclick = () => { selectFunc("text"); };
+      sImage.onclick = () => { selectFunc("image"); };
+      sFile.onclick = () => { selectFunc("file"); };
+
+      return selectFunc;
+    })();
+
+    setSendType("text");
+
+    const sendDataTextEl = document.getElementById("sendDataText");
+    const sendDataImageContainerEl = document.getElementById("sendDataImageContainer");
+    hideEl(sendDataImageContainerEl);
+    const sendDataImageEmptyPlaceholderEl = document.getElementById("sendDataImageEmptyPlaceholder");
+    const sendDataFileEl = document.getElementById("sendDataFile");
+    const sendDataImageEl = document.getElementById("sendDataImage");
+
+    const handleInteractionReceiveData = async (dataItems, { isPreferAsFile = false, isFocusAlreadySendDataText = false, ePreventDefault = null } = {}) => {
+      const handleText = (textData) => () => {
+        setSendType("text");
+        if (isFocusAlreadySendDataText) {
+          return;
+        } else {
+          if (ePreventDefault) {
+            ePreventDefault();
+          }
+        }
+        sendDataTextEl.value = textData;
+      };
+
+      const handleImage = (imageData, mimeType) => () => {
+        if (ePreventDefault) {
+          ePreventDefault();
+        }
+        setSendType("image");
+        sendDataImageContainerEl.innerHTML = "";
+        const imgEl = document.createElement('img');
+        imgEl.classList.add("img-to-send-preview");
+        imgEl.src = URL.createObjectURL(imageData);
+        sendDataImageContainerEl.appendChild(imgEl);
+        showEl(sendDataImageContainerEl);
+        hideEl(sendDataImageEmptyPlaceholderEl);
+
+        const formDt = new DataTransfer();
+        if (imageData instanceof File) {
+          formDt.items.add(imageData);
+        } else {
+          let fileExt = ".png";
+          if (mimeType === "image/x-icon") {
+            fileExt = ".ico";
+          } else {
+            // https://developer.mozilla.org/en-US/docs/Web/Media/Formats/Image_types
+            fileExt = "." + mimeType.split("/")[1].split("+")[0];
+          }
+          formDt.items.add(new File([imageData], "image-" + generateUUID() + fileExt, { type: mimeType, lastModified: new Date().getTime() }));
+        }
+        sendDataImageEl.files = formDt.files;
+      };
+
+      const handleFile = (theFile) => () => {
+        setSendType("file");
+        const formDt = new DataTransfer();
+        formDt.items.add(theFile);
+        sendDataFileEl.files = formDt.files;
+      }
+
+      let finalHandleAction = null;
+
+      loopItem:
+      for (const dataItem of dataItems) {
+        if (dataItem.type === 'text/plain' && (dataItem.kind !== "file" || !isPreferAsFile)) {
+          finalHandleAction = handleText(await new Promise(r => dataItem.getAsString(r)));
+          break loopItem;
+        } else if (dataItem.type?.startsWith('image/') && (dataItem.kind !== "file" || !isPreferAsFile)) {
+          finalHandleAction = handleImage(dataItem.getAsFile(), dataItem.type);
+          break loopItem;
+        } else if (dataItem.kind === "file") {
+          finalHandleAction = handleFile(dataItem.getAsFile());
+          break loopItem;
+        } else if (dataItem.types) {
+          for (const cit of dataItem.types) {
+            if (cit === 'text/plain') {
+              const textDataBlob = await dataItem.getType(cit);
+              finalHandleAction = handleText(await textDataBlob.text());
+              break loopItem;
+            } else if (cit.startsWith('image/')) {
+              finalHandleAction = handleImage(await dataItem.getType(cit), cit);
+              break loopItem;
+            }
+          }
+        }
+      }
+
+      if (finalHandleAction) {
+        finalHandleAction();
+      }
+    }
+
+    const iframeEl = document.getElementById('historyIframe');
+
+    const setupListener = d => {
+      d.addEventListener('paste', async (e) => {
+        let isFocusAlreadySendDataText = false;
+        if (e.target === sendDataTextEl) {
+          isFocusAlreadySendDataText = true;
+        }
+        // e.preventDefault();
+
+        let navigatorClipboardItems = null;
+        if (typeof navigator?.clipboard?.read === 'function') {
+          navigatorClipboardItems = await navigator.clipboard.read();
+          if (navigatorClipboardItems) {
+            console.log("using navigator.clipboard.read()");
+          }
+        }
+
+        const clipboardItems = navigatorClipboardItems ? navigatorClipboardItems : e.clipboardData.items;
+
+        await handleInteractionReceiveData(clipboardItems, {
+          isPreferAsFile: false,
+          ePreventDefault: () => { e.preventDefault(); },
+          isFocusAlreadySendDataText,
+        });
+      });
+
+      d.body.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        await handleInteractionReceiveData(e.dataTransfer.items, {
+          isPreferAsFile: true,
+          isFocusAlreadySendDataText: false,
+        });
+      });
+
+      d.body.ondragover = (e) => { e.preventDefault(); };
+    };
+
+    setupListener(document);
+    iframeEl.onload = () => {
+      const iframeDocument = iframeEl.contentDocument || iframeEl.contentWindow.document;
+      setupListener(iframeDocument);
+    }
+    
+
+
+    fetch("http://test.clashray.home.arpa/currAsPublisher", {
+      // mode: "no-cors",
+    }).then(resp => {
+      resp.text().then(currAsPublisher => {
+        console.log("got publisher: ", currAsPublisher);
+        Array.from(document.querySelectorAll("input[name=sender]")).forEach(el => {
+          el.value = currAsPublisher;
+        });
+        document.getElementById("currAsSender").textContent = "Current as sender: " + currAsPublisher;
+      });
+    });
+
+  </script>
+
+  <script>
+    window.addEventListener('pageshow', function (event) {
+      iframeEl.contentWindow.location.reload();
+    });
+  </script>
+
+</body>
+
+</html>

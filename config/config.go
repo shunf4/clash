@@ -177,23 +177,26 @@ type Experimental struct {
 
 // Config is mihomo config manager
 type Config struct {
-	General                 *General
-	IPTables                *IPTables
-	NTP                     *NTP
-	DNS                     *DNS
-	Experimental            *Experimental
-	Hosts                   *trie.DomainTrie[resolver.HostValue]
-	HostsDialIPDirectlyTrie *trie.DomainTrie[bool]
-	Profile                 *Profile
-	Rules                   []C.Rule
-	SubRules                map[string][]C.Rule
-	Users                   []auth.AuthUser
-	Proxies                 map[string]C.Proxy
-	Listeners               map[string]C.InboundListener
-	Providers               map[string]providerTypes.ProxyProvider
-	RuleProviders           map[string]providerTypes.RuleProvider
-	Tunnels                 []LC.Tunnel
-	Reverses                []T.ReverseConf
+	General                                 *General
+	IPTables                                *IPTables
+	NTP                                     *NTP
+	DNS                                     *DNS
+	Experimental                            *Experimental
+	Hosts                                   *trie.DomainTrie[resolver.HostValue]
+	HostsDialIPDirectlyTrie                 *trie.DomainTrie[bool]
+	Profile                                 *Profile
+	Rules                                   []C.Rule
+	SubRules                                map[string][]C.Rule
+	Users                                   []auth.AuthUser
+	Proxies                                 map[string]C.Proxy
+	Listeners                               map[string]C.InboundListener
+	Providers                               map[string]providerTypes.ProxyProvider
+	RuleProviders                           map[string]providerTypes.RuleProvider
+	Tunnels                                 []LC.Tunnel
+	Reverses                                []T.ReverseConf
+	ReverseSeeAsErrorIfDisconnectInMillisec int
+	ReverseStopAfterErrorRetryCount         int
+	ReverseEnableOnAndroidTypeTransports    []int
 	T.Clashray
 	Sniffer *Sniffer
 	TLS     *TLS
@@ -350,12 +353,18 @@ type RawConfig struct {
 	Listeners     []map[string]any          `yaml:"listeners"`
 	Reverses      []T.ReverseConf           `yaml:"reverses"`
 
+	ReverseStopAfterErrorRetryCount         int   `yaml:"reverse-stop-after-error-retry-count"`
+	ReverseSeeAsErrorIfDisconnectInMillisec int   `yaml:"reverse-see-as-error-if-disconnect-in-millisec"`
+	ReverseEnableOnAndroidTypeTransports    []int `yaml:"reverse-enable-on-android-type-transports"`
+
 	ClashForAndroid RawClashForAndroid `yaml:"clash-for-android" json:"clash-for-android"`
 
-	ClashrayNetCurrAsPublisher string                   `yaml:"clashray-net-curr-as-publisher"`
-	ClashrayNetCurrIsAsVisitor bool                     `yaml:"clashray-net-curr-is-as-visitor"`
-	ClashraySendDir            string                   `yaml:"clashray-send-dir"`
-	ClashrayNetPublishers      []T.ClashrayNetPublisher `yaml:"clashray-net-publishers"`
+	ClashrayNetCurrAsPublisher     string                   `yaml:"clashray-net-curr-as-publisher"`
+	ClashrayNetCurrIsAsVisitor     bool                     `yaml:"clashray-net-curr-is-as-visitor"`
+	ClashrayNetDisableHostsTunnels bool                     `yaml:"clashray-net-disable-hosts-tunnels"`
+	ClashraySendDir                string                   `yaml:"clashray-send-dir"`
+	ClashrayNetPublishers          []T.ClashrayNetPublisher `yaml:"clashray-net-publishers"`
+	ClashrayHTTPRedirectMap        map[string]string        `yaml:"clashray-http-redirect-map"`
 }
 
 type GeoXUrl struct {
@@ -513,8 +522,9 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 		},
 		ExternalUIURL: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip",
 
-		ClashrayNetCurrAsPublisher: "",
-		ClashrayNetCurrIsAsVisitor: false,
+		ClashrayNetCurrAsPublisher:     "",
+		ClashrayNetCurrIsAsVisitor:     false,
+		ClashrayNetDisableHostsTunnels: false,
 	}
 
 	if err := yaml.Unmarshal(buf, rawCfg); err != nil {
@@ -533,6 +543,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 	config.Clashray.ClashrayNetCurrAsPublisher = rawCfg.ClashrayNetCurrAsPublisher
 	config.Clashray.ClashrayNetCurrIsAsVisitor = rawCfg.ClashrayNetCurrIsAsVisitor
+	config.Clashray.ClashrayNetDisableHostsTunnels = rawCfg.ClashrayNetDisableHostsTunnels
+	config.Clashray.ClashrayHTTPRedirectMap = rawCfg.ClashrayHTTPRedirectMap
 	config.Clashray.ClashraySendDir = rawCfg.ClashraySendDir
 	config.Clashray.ClashrayNetPublishers = rawCfg.ClashrayNetPublishers
 	pMap := make(map[string]*T.ClashrayNetPublisher)
@@ -558,6 +570,9 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	}
 	if rawCfg.Hosts == nil {
 		rawCfg.Hosts = make(map[string]any)
+	}
+	if config.Clashray.ClashrayHTTPRedirectMap == nil {
+		config.Clashray.ClashrayHTTPRedirectMap = make(map[string]string)
 	}
 
 	publisherEverMatched := false
@@ -688,8 +703,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		publisherBridgeConnRules := map[string][]string{}
 
 		for rci := range p.ReverseContacts {
-			publisherBridgeConnRuleName := "clashray-net-" + p.Name + "-bridge-conn-rule-" + strconv.Itoa(rci)
 			rc := &p.ReverseContacts[rci]
+			publisherBridgeConnRuleName := "clashray-net-" + p.Name + "-bridge-conn-rule-" + strconv.Itoa(rci) + "-" + rc.BridgeConnProxy
 			if isVisitorAndNotCurrentPublisher {
 				visitorProxy := rc.VisitorProxy
 				if visitorProxy == "" {
@@ -761,7 +776,6 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			publisherPayloadConnSvcRules = append(publisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort))
 
 			visitorTunnelDedup := map[string]bool{}
-			visitorHTTPRedirectTunnelDedup := map[string]bool{}
 			for spi := 4; spi < len(sParts); spi++ {
 				opt := sParts[spi]
 				if vt, ok := strings.CutPrefix(opt, "visitortunnel="); ok {
@@ -795,60 +809,39 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 					tunnelName := "clashray-net-" + p.Name + "-svc-" + strconv.Itoa(si) + "-tunnel-" + strconv.Itoa(spi-4)
 
-					if _, found := visitorTunnelDedup[vtListenHost+":"+vtListenPortStr]; !found {
-						currListener := make(map[string]interface{})
-						visitorTunnelListeners = append(visitorTunnelListeners, currListener)
-						currListener["name"] = tunnelName
-						currListener["type"] = "tunnel"
-						currListener["listen"] = vtListenHost
-						currListener["port"] = vtListenPort
-						currListener["network"] = []string{"tcp"}
-						currListener["target"] = sHost + ":" + vtListenPortStr
-						currListener["rule"] = payloadConnFinalRuleName
-					}
-					visitorTunnelDedup[vtListenHost+":"+vtListenPortStr] = true
+					if !config.Clashray.ClashrayNetDisableHostsTunnels {
+						if _, found := visitorTunnelDedup[vtListenHost+":"+vtListenPortStr]; !found {
+							currListener := make(map[string]interface{})
+							visitorTunnelListeners = append(visitorTunnelListeners, currListener)
+							currListener["name"] = tunnelName
+							currListener["type"] = "tunnel"
+							currListener["listen"] = vtListenHost
+							currListener["port"] = vtListenPort
+							currListener["network"] = []string{"tcp"}
+							currListener["target"] = sHost + ":" + vtListenPortStr
+							currListener["rule"] = payloadConnFinalRuleName
+						}
+						visitorTunnelDedup[vtListenHost+":"+vtListenPortStr] = true
 
-					visitorHosts[vtHostWildcard] = vtListenHost
+						visitorHosts[vtHostWildcard] = vtListenHost
+					}
 
 					if len(vtParts) >= 4 {
-						if len(vtParts) < 6 {
-							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel-httpredirect option, len(vtParts) %d < 6", p.Name, si, len(vtParts))
+						if len(vtParts) < 4 {
+							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel-httpredirect option, len(vtParts) %d < 4", p.Name, si, len(vtParts))
 						}
 						httpRedirectHost, cutOk := strings.CutPrefix(vtParts[3], "httpredirect=")
 						if !cutOk {
 							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel-httpredirect option, vtParts[3] %s expected starting with httpredirect=", p.Name, si, vtParts[3])
 						}
-						httpRedirectListenHost := vtParts[4]
-						if httpRedirectListenHost == "" {
-							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, httpRedirectListenHost is empty", p.Name, si)
-						}
-						httpRedirectListenPortStr := vtParts[5]
-						if httpRedirectListenPortStr == "" {
-							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, httpRedirectListenPortStr is empty", p.Name, si)
-						}
-						httpRedirectListenPortRaw, err := strconv.ParseUint(httpRedirectListenPortStr, 10, 16)
-						if err != nil {
-							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, parsing httpRedirectListenPortStr %s: %v", p.Name, si, httpRedirectListenPortStr, err)
-						}
-						httpRedirectListenPort := uint16(httpRedirectListenPortRaw)
 
-						if _, found := visitorHTTPRedirectTunnelDedup[httpRedirectHost+":"+httpRedirectListenPortStr]; !found {
-							currListener := make(map[string]interface{})
-							visitorTunnelListeners = append(visitorTunnelListeners, currListener)
-							currListener["name"] = tunnelName + "-httpredirect"
-							currListener["type"] = "tunnel"
-							currListener["listen"] = httpRedirectListenHost
-							currListener["port"] = httpRedirectListenPort
-							currListener["network"] = []string{"tcp"}
-							// TODO: ?
-							currListener["target"] = httpRedirectHost + ":" + httpRedirectListenPortStr
-							currListener["rule"] = payloadConnFinalRuleName
+						config.Clashray.ClashrayHTTPRedirectMap[httpRedirectHost] = vtListenHost + ":" + vtListenPortStr
+
+						visitorPayloadConnHTTPRedirectRules = append(visitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
+
+						if !config.Clashray.ClashrayNetDisableHostsTunnels {
+							visitorHosts[httpRedirectHost] = "127.0.199.199"
 						}
-						visitorHTTPRedirectTunnelDedup[httpRedirectHost+":"+httpRedirectListenPortStr] = true
-
-						visitorPayloadConnHTTPRedirectRules = append(visitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-REDIRECT-"+vtListenHost+":"+vtListenPortStr))
-
-						visitorHosts[httpRedirectHost] = httpRedirectListenHost
 					}
 				}
 			}
@@ -905,6 +898,56 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	if !publisherEverMatched && config.Clashray.ClashrayNetCurrAsPublisher != "" {
 		log.Warnln("clashray-net: warn: ClashrayNetCurrAsPublisher [%s] never matched", config.Clashray.ClashrayNetCurrAsPublisher)
 	}
+
+	if !config.Clashray.ClashrayNetDisableHostsTunnels {
+		httpRedirectListener := make(map[string]interface{})
+		rawCfg.Listeners = append(rawCfg.Listeners, httpRedirectListener)
+		httpRedirectListener["name"] = "clashray-http-redirect-listener"
+		httpRedirectListener["type"] = "tunnel"
+		httpRedirectListener["listen"] = "127.0.199.199"
+		httpRedirectListener["port"] = 80
+		httpRedirectListener["network"] = []string{"tcp"}
+		httpRedirectListener["target"] = "0.0.0.0" + ":" + "0"
+		httpRedirectListener["rule"] = "clashray-http-redirect-rule"
+
+		rawCfg.SubRules["clashray-http-redirect-rule"] = []string{
+			"MATCH,INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT",
+		}
+
+		clashrayTestListener := make(map[string]interface{})
+		rawCfg.Listeners = append(rawCfg.Listeners, clashrayTestListener)
+		clashrayTestListener["name"] = "clashray-test-listener"
+		clashrayTestListener["type"] = "tunnel"
+		clashrayTestListener["listen"] = "127.0.199.198"
+		clashrayTestListener["port"] = 80
+		clashrayTestListener["network"] = []string{"tcp"}
+		clashrayTestListener["target"] = "0.0.0.0" + ":" + "0"
+		clashrayTestListener["rule"] = "clashray-test-rule"
+
+		rawCfg.SubRules["clashray-test-rule"] = []string{
+			"MATCH,INTERNAL-HTTP:::CLASHRAY-TEST",
+		}
+
+		rawCfg.Hosts["test.clashray.home.arpa"] = "127.0.199.198"
+
+		clashraySendListener := make(map[string]interface{})
+		rawCfg.Listeners = append(rawCfg.Listeners, clashraySendListener)
+		clashraySendListener["name"] = "clashray-send-listener"
+		clashraySendListener["type"] = "tunnel"
+		clashraySendListener["listen"] = "127.0.199.197"
+		clashraySendListener["port"] = 80
+		clashraySendListener["network"] = []string{"tcp"}
+		clashraySendListener["target"] = "0.0.0.0" + ":" + "0"
+		clashraySendListener["rule"] = "clashray-send-rule"
+
+		rawCfg.SubRules["clashray-send-rule"] = []string{
+			"MATCH,INTERNAL-HTTP:::CLASHRAY-SEND",
+		}
+
+		rawCfg.Hosts["send.clashray.home.arpa"] = "127.0.199.197"
+	}
+
+	rawCfg.Rule = append([]string{"DOMAIN-SUFFIX,test.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-TEST", "DOMAIN-SUFFIX,send.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-SEND"}, rawCfg.Rule...)
 
 	////// shunf4 mod: clashray-net: end
 
@@ -996,6 +1039,9 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	}
 
 	config.Reverses = rawCfg.Reverses
+	config.ReverseStopAfterErrorRetryCount = rawCfg.ReverseStopAfterErrorRetryCount
+	config.ReverseSeeAsErrorIfDisconnectInMillisec = rawCfg.ReverseSeeAsErrorIfDisconnectInMillisec
+	config.ReverseEnableOnAndroidTypeTransports = rawCfg.ReverseEnableOnAndroidTypeTransports
 	for ri := range config.Reverses {
 		r := &config.Reverses[ri]
 		if r.ReverseIdentDomain == "" {
@@ -1218,6 +1264,8 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 }
 
 func parseListeners(cfg *RawConfig) (listeners map[string]C.InboundListener, err error) {
+	L.ParseListenersStart()
+	defer L.ParseListenersEnd()
 	listeners = make(map[string]C.InboundListener)
 	for index, mapping := range cfg.Listeners {
 		listener, err := L.ParseListener(mapping)

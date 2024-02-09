@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 
@@ -22,6 +23,12 @@ var (
 	reverseCtxCancel  context.CancelFunc
 	reverseMutex      sync.Mutex
 	reverseFirstStart bool = true
+
+	lastCfgList                          []ReverseConf
+	lastStopAfterErrRetryCount           int
+	lastSeeAsErrorIfDisconnectInMillisec int
+	lastEnableOnAndroidTypeTransports    []int
+	lastCurrAndroidTypeTransports        int = -2
 )
 
 type ClashrayReverseContact struct {
@@ -46,11 +53,13 @@ type ClashrayNetPublisher struct {
 }
 
 type Clashray struct {
-	ClashrayNetCurrAsPublisher string                 `yaml:"clashray-net-curr-as-publisher"`
-	ClashrayNetCurrIsAsVisitor bool                   `yaml:"clashray-net-curr-is-as-visitor"`
-	ClashraySendDir            string                 `yaml:"clashray-send-dir"`
-	ClashrayNetPublishers      []ClashrayNetPublisher `yaml:"clashray-net-publishers"`
-	ClashrayNetPublishersMap   map[string]*ClashrayNetPublisher
+	ClashrayNetCurrAsPublisher     string                 `yaml:"clashray-net-curr-as-publisher"`
+	ClashrayNetCurrIsAsVisitor     bool                   `yaml:"clashray-net-curr-is-as-visitor"`
+	ClashrayNetDisableHostsTunnels bool                   `yaml:"clashray-net-disable-hosts-tunnels"`
+	ClashraySendDir                string                 `yaml:"clashray-send-dir"`
+	ClashrayNetPublishers          []ClashrayNetPublisher `yaml:"clashray-net-publishers"`
+	ClashrayNetPublishersMap       map[string]*ClashrayNetPublisher
+	ClashrayHTTPRedirectMap        map[string]string
 }
 
 type ReverseConf struct {
@@ -62,12 +71,44 @@ type ReverseConf struct {
 	RetryDelayMillisec int `yaml:"retry-delay-millisec"`
 }
 
-func RestartReverse(cfgList []ReverseConf) {
+func saveReverseConfData(cfgList []ReverseConf, stopAfterErrRetryCount int, seeAsErrorIfDisconnectInMillisec int, enableOnAndroidTypeTransports []int, currAndroidTypeTransports int) {
+	reverseMutex.Lock()
+	defer reverseMutex.Unlock()
+
+	lastCfgList = cfgList
+	lastStopAfterErrRetryCount = stopAfterErrRetryCount
+	lastSeeAsErrorIfDisconnectInMillisec = seeAsErrorIfDisconnectInMillisec
+	lastEnableOnAndroidTypeTransports = enableOnAndroidTypeTransports
+	if currAndroidTypeTransports != -2 {
+		lastCurrAndroidTypeTransports = currAndroidTypeTransports
+	}
+}
+
+func RestartReverseLast(currAndroidTypeTransports int) {
+	RestartReverse(lastCfgList, lastStopAfterErrRetryCount, lastSeeAsErrorIfDisconnectInMillisec, lastEnableOnAndroidTypeTransports, currAndroidTypeTransports)
+}
+
+func RestartReverse(cfgList []ReverseConf, stopAfterErrRetryCount int, seeAsErrorIfDisconnectInMillisec int, enableOnAndroidTypeTransports []int, currAndroidTypeTransports int) {
+	saveReverseConfData(cfgList, stopAfterErrRetryCount, seeAsErrorIfDisconnectInMillisec, enableOnAndroidTypeTransports, currAndroidTypeTransports)
+
 	reverseMutex.Lock()
 	defer reverseMutex.Unlock()
 
 	if reverseCtxCancel != nil {
 		reverseCtxCancel()
+		reverseCtx = nil
+		reverseCtxCancel = nil
+	}
+
+	if seeAsErrorIfDisconnectInMillisec <= 0 {
+		seeAsErrorIfDisconnectInMillisec = 10000
+	}
+
+	log.Infoln("reverse: enableOnAndroidTypeTransports: %v, currAndroidTypeTransports: %d (last=%d)", enableOnAndroidTypeTransports, currAndroidTypeTransports, lastCurrAndroidTypeTransports)
+
+	if len(enableOnAndroidTypeTransports) != 0 && lastCurrAndroidTypeTransports != -2 && !slices.Contains(enableOnAndroidTypeTransports, lastCurrAndroidTypeTransports) {
+		log.Warnln("reverse: lastCurrAndroidTypeTransports not in allow list, not starting reverse")
+		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -75,13 +116,12 @@ func RestartReverse(cfgList []ReverseConf) {
 	reverseCtxCancel = cancel
 
 	shouldDelay := false
+	log.Infoln("(re)start reverse mechanism")
 	if reverseFirstStart {
 		shouldDelay = true
 		log.Infoln("wait for 1 second before starting reverse mechanism...")
 		reverseFirstStart = false
 	}
-
-	log.Debugln("(re)start reverse machanism")
 
 	for _, cfg := range cfgList {
 		reverseIdentDomain := ""
@@ -127,10 +167,22 @@ func RestartReverse(cfgList []ReverseConf) {
 			metadata.SpecialRules = thisCfg.BridgeConnSubRule
 
 			isRetrying := false
+			lastStartTime := time.Now()
+			errRetryCount := 0
 		reverseRetry:
 			for {
 				if isRetrying {
-					log.Infoln("wait for %d milliseconds before retrying reverse connection...", thisCfg.RetryDelayMillisec)
+					if stopAfterErrRetryCount > 0 && errRetryCount >= stopAfterErrRetryCount {
+						log.Warnln("reverse: reverseIdentDomain=%s: error retry count reached %d, not retrying anymore", reverseIdentDomain, errRetryCount)
+						break reverseRetry
+					}
+					if time.Since(lastStartTime) <= (time.Duration(seeAsErrorIfDisconnectInMillisec) * time.Millisecond) {
+						errRetryCount += 1
+						log.Infoln("reverse: reverseIdentDomain=%s: error connecting, retrying a %d time", reverseIdentDomain, errRetryCount)
+					} else {
+						errRetryCount = 0
+					}
+					log.Infoln("reverse: wait for %d milliseconds before retrying reverse connection...", thisCfg.RetryDelayMillisec)
 
 					t := time.NewTimer(time.Duration(thisCfg.RetryDelayMillisec) * time.Millisecond)
 					select {
@@ -145,6 +197,7 @@ func RestartReverse(cfgList []ReverseConf) {
 				}
 
 				conn1, conn2 := net.Pipe()
+				lastStartTime = time.Now()
 
 				go func() {
 					log.Debugln("starts reverse bridge connection")
@@ -154,6 +207,7 @@ func RestartReverse(cfgList []ReverseConf) {
 
 				// conn1 is a V2Ray Mux Server Worker connection.
 				w := &MuxServerWorker{
+					fromBridgeWithRule: thisCfg.BridgeConnSubRule,
 					sessions:           make(map[uint16]*MuxSession, 16),
 					PayloadConnSubRule: thisCfg.PayloadConnSubRule,
 				}
@@ -192,6 +246,7 @@ type MuxSession struct {
 
 type MuxServerWorker struct {
 	sync.RWMutex
+	fromBridgeWithRule string
 	sessions           map[uint16]*MuxSession
 	PayloadConnSubRule string
 }
@@ -389,6 +444,7 @@ func muxServerHandleFrame(w *MuxServerWorker, conn net.Conn) (*FrameMetadata, er
 		sessionConnMeta.DstPort = f.TargetPort
 		sessionConnMeta.DstIP = f.TargetIP
 		sessionConnMeta.Host = f.TargetDomain
+		sessionConnMeta.InName = "BridgeWithRule:" + w.fromBridgeWithRule
 
 		go func() {
 			log.Debugln("reverse: new reverse connection: serverWorker=%p, sessionID=%d, dest= %s / %s : %d", w, f.SessionID, f.TargetDomain, f.TargetIP.String(), f.TargetPort)
