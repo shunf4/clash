@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,8 @@ var (
 	internalHTTPMutex                sync.Mutex
 	clashraySendHistoryMutex         sync.Mutex
 	clashraySendTextMutex            sync.Mutex
+
+	clashCurrRawConfigBytes []byte
 )
 
 //go:embed send.html
@@ -53,9 +56,21 @@ type historyData struct {
 	FileSize  uint64
 }
 
+func SaveClashCurrRawConfig(clashCurrRawConfigBytes_ []byte, err error) {
+	if err != nil {
+		log.Warnln("SaveClashCurrRawConfig: has error: %v", err)
+	}
+	clashCurrRawConfigBytes = clashCurrRawConfigBytes_
+}
+
 func neuter(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/") {
+			http.NotFound(w, r)
+			return
+		}
+
+		if strings.HasSuffix(strings.ToLower(r.URL.Path), "clashcurrrawconfig.yaml") {
 			http.NotFound(w, r)
 			return
 		}
@@ -73,6 +88,11 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 		panic(err)
 	}
 
+	if runtime.GOOS == "android" {
+		os.MkdirAll("/data/data/com.github.metacubex.clash.shunf4mod.meta/cache", os.FileMode(0o750))
+		os.Setenv("TMPDIR", "/data/data/com.github.metacubex.clash.shunf4mod.meta/cache")
+	}
+
 	historyHTMLTmpl, err := template.New("history").Funcs(template.FuncMap{
 		"ByteCountIEC": func(b uint64) string {
 			const unit = 1024
@@ -87,7 +107,7 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 			return fmt.Sprintf("%.1f %ciB",
 				float64(b)/float64(div), "KMGTPE"[exp])
 		},
-		"URLEncode": url.QueryEscape,
+		"URLEncode": func(s string) string { return strings.ReplaceAll(url.QueryEscape(s), "+", "%20") },
 		"isPicture": func(d historyData) bool {
 			fileNameLower := strings.ToLower(d.FileName)
 			return d.SendType == "file" && (strings.HasSuffix(fileNameLower, ".bmp") ||
@@ -109,6 +129,11 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 
 	if clashrayConfig.ClashraySendDir != "" {
 		os.MkdirAll(clashrayConfig.ClashraySendDir, os.FileMode(0o750))
+
+		if len(clashCurrRawConfigBytes) > 0 {
+			os.WriteFile(filepath.Join(clashrayConfig.ClashraySendDir, "ClashCurrRawConfig.yaml"), clashCurrRawConfigBytes, os.FileMode(0o640))
+		}
+
 		hf, err := os.OpenFile(filepath.Join(clashrayConfig.ClashraySendDir, "history.json"), os.O_CREATE, os.FileMode(0o640))
 		if err != nil {
 

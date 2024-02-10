@@ -27,6 +27,10 @@
     .copy-link.withjs {
       display: inline;
     }
+
+    .send-summary {
+      font-size: large;
+    }
     
   </style>
 </head>
@@ -40,7 +44,7 @@
   <div style="width: 100%">
   <span>{{ if ne .Sender "" }}Sender: {{ .Sender }}{{ else }}&emsp;{{ end }}</span>
   <span style="float:right">{{ .Timestamp }}</span>
-  <p><pre>{{ .Summary }}</pre></p>
+  <p><pre class="send-summary">{{ .Summary }}</pre></p>
   {{ if isPicture $h }}
   <a target="_blank" href="/file/{{ URLEncode .FileName }}"><img src="/file/{{ URLEncode .FileName }}" style="max-width: 10em; max-height: 10em;" /></a>
   {{ end }}

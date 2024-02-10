@@ -783,8 +783,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 					for vtpi := range vtParts {
 						vtParts[vtpi] = strings.TrimSpace(vtParts[vtpi])
 					}
-					if len(vtParts) < 3 {
-						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, len(vtParts) %d < 3", p.Name, si, len(vtParts))
+					if len(vtParts) < 2 {
+						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, len(vtParts) %d < 2", p.Name, si, len(vtParts))
 					}
 					vtHostWildcard := vtParts[0]
 					if vtHostWildcard == "." {
@@ -797,31 +797,63 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 					if vtListenHost == "" {
 						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, vtListenHost is empty", p.Name, si)
 					}
-					vtListenPortStr := vtParts[2]
-					if vtListenPortStr == "" {
-						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, vtListenPortStr is empty", p.Name, si)
+					var vtListenPortStr string
+					var vtListenPortRaw uint64
+					var vtListenPort uint16
+					if len(vtParts) >= 3 {
+						vtListenPortStr = vtParts[2]
+						if vtListenPortStr == "" {
+							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, vtListenPortStr is empty", p.Name, si)
+						}
+						vtListenPortRaw, err = strconv.ParseUint(vtListenPortStr, 10, 16)
+						if err != nil {
+							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, parsing vtListenPortStr %s: %v", p.Name, si, vtListenPortStr, err)
+						}
+						vtListenPort = uint16(vtListenPortRaw)
+						vtListenPortStr = strconv.FormatInt(int64(vtListenPort), 10)
 					}
-					vtListenPortRaw, err := strconv.ParseUint(vtListenPortStr, 10, 16)
-					if err != nil {
-						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel option, parsing vtListenPortStr %s: %v", p.Name, si, vtListenPortStr, err)
-					}
-					vtListenPort := uint16(vtListenPortRaw)
 
 					tunnelName := "clashray-net-" + p.Name + "-svc-" + strconv.Itoa(si) + "-tunnel-" + strconv.Itoa(spi-4)
 
 					if !config.Clashray.ClashrayNetDisableHostsTunnels {
-						if _, found := visitorTunnelDedup[vtListenHost+":"+vtListenPortStr]; !found {
-							currListener := make(map[string]interface{})
-							visitorTunnelListeners = append(visitorTunnelListeners, currListener)
-							currListener["name"] = tunnelName
-							currListener["type"] = "tunnel"
-							currListener["listen"] = vtListenHost
-							currListener["port"] = vtListenPort
-							currListener["network"] = []string{"tcp"}
-							currListener["target"] = sHost + ":" + vtListenPortStr
-							currListener["rule"] = payloadConnFinalRuleName
+						if vtListenPort > 0 {
+							if _, found := visitorTunnelDedup[vtListenHost+":"+vtListenPortStr]; !found {
+								currListener := make(map[string]interface{})
+								visitorTunnelListeners = append(visitorTunnelListeners, currListener)
+								currListener["name"] = tunnelName
+								currListener["type"] = "tunnel"
+								currListener["listen"] = vtListenHost
+								currListener["port"] = vtListenPort
+								currListener["network"] = []string{"tcp"}
+								currListener["target"] = sHost + ":" + vtListenPortStr
+								currListener["rule"] = payloadConnFinalRuleName
+							}
+							visitorTunnelDedup[vtListenHost+":"+vtListenPortStr] = true
 						}
-						visitorTunnelDedup[vtListenHost+":"+vtListenPortStr] = true
+
+						if vtListenPort > 0 {
+							visitorNotPublisherPayloadConnSvcRules = append(
+								visitorNotPublisherPayloadConnSvcRules,
+								"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+currContactProxyGroupName+":::"+sHost,
+							)
+							if isVisitor && isCurrentPublisher {
+								publisherPayloadConnSvcRules = append(
+									publisherPayloadConnSvcRules,
+									"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
+								)
+							}
+						} else {
+							visitorNotPublisherPayloadConnSvcRules = append(
+								visitorNotPublisherPayloadConnSvcRules,
+								"IP-CIDR,"+vtListenHost+"/32,"+currContactProxyGroupName+":::"+sHost+",no-resolve",
+							)
+							if isVisitor && isCurrentPublisher {
+								publisherPayloadConnSvcRules = append(
+									publisherPayloadConnSvcRules,
+									"IP-CIDR,"+vtListenHost+"/32,"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort+",no-resolve",
+								)
+							}
+						}
 
 						visitorHosts[vtHostWildcard] = vtListenHost
 					}
@@ -835,7 +867,12 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel-httpredirect option, vtParts[3] %s expected starting with httpredirect=", p.Name, si, vtParts[3])
 						}
 
-						config.Clashray.ClashrayHTTPRedirectMap[httpRedirectHost] = vtListenHost + ":" + vtListenPortStr
+						config.Clashray.ClashrayHTTPRedirectMap[httpRedirectHost] = vtListenHost
+						if vtListenPort > 0 {
+							config.Clashray.ClashrayHTTPRedirectMap[httpRedirectHost] += ":" + vtListenPortStr
+						} else if sRealDestPort != "" {
+							// TODO: use sRealDestPort?
+						}
 
 						visitorPayloadConnHTTPRedirectRules = append(visitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
 
@@ -1068,6 +1105,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 	elapsedTime := time.Since(startTime) / time.Millisecond                     // duration in ms
 	log.Infoln("Initial configuration complete, total time: %dms", elapsedTime) //Segment finished in xxm
+
+	T.SaveClashCurrRawConfig(yaml.Marshal(rawCfg))
 
 	return config, nil
 }
