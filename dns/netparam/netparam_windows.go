@@ -79,7 +79,13 @@ func filterEmptyString(s []string) []string {
 }
 
 func GetGateways() (gateways []string) {
-	out, err := exec.Command("powershell", "-command", "$ifi=Find-NetRoute -RemoteIPAddress 0.0.0.0|Select InterfaceIndex -Last 1|Select -ExpandProperty InterfaceIndex;Get-WmiObject Win32_NetworkAdapter -Filter InterfaceIndex=$ifi|Select-Object -ExpandProperty GUID").Output()
+	out, err := exec.Command("powershell", "-command", "Find-NetRoute -RemoteIPAddress 0.0.0.0 | Select-Object -ExpandProperty NextHop -Last 1").Output()
+	if err == nil {
+		outStr := strings.TrimSpace(string(out))
+		return filterEmptyString([]string{outStr})
+	}
+
+	out, err = exec.Command("powershell", "-command", "$ifi=Find-NetRoute -RemoteIPAddress 0.0.0.0|Select InterfaceIndex -Last 1|Select -ExpandProperty InterfaceIndex;Get-WmiObject Win32_NetworkAdapter -Filter InterfaceIndex=$ifi|Select-Object -ExpandProperty GUID").Output()
 	if err != nil {
 		log.Warnln("GetGateways() powershell: %s", err.Error())
 		return []string{}
