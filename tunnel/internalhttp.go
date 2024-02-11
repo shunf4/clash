@@ -26,6 +26,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/go-chi/render"
 	"github.com/gofrs/uuid/v5"
+	"github.com/metacubex/mihomo/common/observable"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
 )
@@ -37,6 +38,9 @@ var (
 	internalHTTPMutex                sync.Mutex
 	clashraySendHistoryMutex         sync.Mutex
 	clashraySendTextMutex            sync.Mutex
+
+	clashraySendCh         = make(chan ClashraySendReceiveData)
+	clashraySendObservable = observable.NewObservable[ClashraySendReceiveData](clashraySendCh)
 
 	clashCurrRawConfigBytes []byte
 )
@@ -54,6 +58,27 @@ type historyData struct {
 	Sender    string
 	FileName  string
 	FileSize  uint64
+}
+
+type ClashraySendReceiveData struct {
+	Timestamp       string
+	SendType        string
+	Summary         string
+	InstantCopyText string
+	Sender          string
+	FileName        string
+	FileSize        uint64
+	FilePath        string
+}
+
+// immitating log.go
+func ClashraySendSubscribe() observable.Subscription[ClashraySendReceiveData] {
+	sub, _ := clashraySendObservable.Subscribe()
+	return sub
+}
+
+func ClashraySendUnsubscribe(sub observable.Subscription[ClashraySendReceiveData]) {
+	clashraySendObservable.UnSubscribe(sub)
 }
 
 func SaveClashCurrRawConfig(clashCurrRawConfigBytes_ []byte, err error) {
@@ -79,6 +104,20 @@ func neuter(next http.Handler) http.Handler {
 	})
 }
 
+func byteCountIEC(b uint64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB",
+		float64(b)/float64(div), "KMGTPE"[exp])
+}
+
 func RefreshInternalHTTP(clashrayConfig *Clashray) {
 	internalHTTPMutex.Lock()
 	defer internalHTTPMutex.Unlock()
@@ -94,20 +133,8 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 	}
 
 	historyHTMLTmpl, err := template.New("history").Funcs(template.FuncMap{
-		"ByteCountIEC": func(b uint64) string {
-			const unit = 1024
-			if b < unit {
-				return fmt.Sprintf("%d B", b)
-			}
-			div, exp := int64(unit), 0
-			for n := b / unit; n >= unit; n /= unit {
-				div *= unit
-				exp++
-			}
-			return fmt.Sprintf("%.1f %ciB",
-				float64(b)/float64(div), "KMGTPE"[exp])
-		},
-		"URLEncode": func(s string) string { return strings.ReplaceAll(url.QueryEscape(s), "+", "%20") },
+		"ByteCountIEC": byteCountIEC,
+		"URLEncode":    func(s string) string { return strings.ReplaceAll(url.QueryEscape(s), "+", "%20") },
 		"isPicture": func(d historyData) bool {
 			fileNameLower := strings.ToLower(d.FileName)
 			return d.SendType == "file" && (strings.HasSuffix(fileNameLower, ".bmp") ||
@@ -216,17 +243,43 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 				return fmt.Errorf("saving file: %w", err)
 			}
 
-			runes := []rune(string(textBytes))
+			textString := string(textBytes)
+			runes := []rune(textString)
 			ellipsis := "..."
 			runeCut := 400
 			if runeCut > len(runes) {
 				ellipsis = ""
 				runeCut = len(runes)
 			}
-			err = saveHistory("text", string(runes[:runeCut])+ellipsis, sender, fileName, uint64(len(textBytes)), time.Now())
-
+			now := time.Now()
+			summary := string(runes[:runeCut]) + ellipsis
+			err = saveHistory("text", summary, sender, fileName, uint64(len(textBytes)), now)
 			if err != nil {
 				return fmt.Errorf("saving history: %w", err)
+			}
+
+			instantCopyText := ""
+			if len(runes) < 2*1024*1024 && len(textBytes) < 7*1024*1024 { // about 3~5MiBytes of text
+				instantCopyText = textString
+			}
+
+			chSummary := summary
+			if ellipsis != "" {
+				chSummary += " (" + byteCountIEC(uint64(len(textBytes))) + ")"
+			}
+			if sender != "" {
+				chSummary += " sent by " + sender
+			}
+
+			clashraySendCh <- ClashraySendReceiveData{
+				Timestamp:       now.Format("2006-01-02 15:04:05 Z07:00"),
+				SendType:        "text",
+				Summary:         chSummary,
+				InstantCopyText: instantCopyText,
+				Sender:          sender,
+				FileName:        fileName,
+				FileSize:        uint64(len(textBytes)),
+				FilePath:        filepath.Join(clashrayConfig.ClashraySendDir, fileName),
 			}
 
 			return nil
@@ -341,6 +394,24 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 				internalHttpError(w, r, http.StatusInternalServerError, "Error during updating history", err)
 				return
 			}
+
+			chSummary := "File: " + safeName
+			chSummary += " (" + byteCountIEC(uint64(fileActualSize)) + ")"
+			if sender != "" {
+				chSummary += " sent by " + sender
+			}
+
+			clashraySendCh <- ClashraySendReceiveData{
+				Timestamp:       sendTime.Format("2006-01-02 15:04:05 Z07:00"),
+				SendType:        "file",
+				Summary:         chSummary,
+				InstantCopyText: "",
+				Sender:          sender,
+				FileName:        safeName,
+				FileSize:        uint64(uint64(fileActualSize)),
+				FilePath:        filepath.Join(clashrayConfig.ClashraySendDir, safeName),
+			}
+
 			render.PlainText(w, r, "OK")
 		})
 
@@ -450,7 +521,7 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 
 	internalHTTPClashrayHTTPRedirect = chi.NewRouter()
 	internalHTTPClashrayHTTPRedirect.Use(middleware.Logger)
-	internalHTTPClashrayHTTPRedirect.Get("/", func(w http.ResponseWriter, r *http.Request) {
+	internalHTTPClashrayHTTPRedirect.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 		// From https://github.com/go-chi/hostrouter/blob/master/hostrouter.go
 		parseForwarded := func(forwarded string) (addr, proto, host string) {
 			if forwarded == "" {
@@ -501,7 +572,13 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 			internalHttpError(w, r, http.StatusInternalServerError, "Redirect URL not found")
 			return
 		}
-		http.Redirect(w, r, "http://"+targetHost+r.URL.RequestURI(), http.StatusTemporaryRedirect)
+		targetURL := targetHost
+		hasHttps := strings.HasPrefix(targetHost, "https://")
+		if !hasHttps {
+			targetURL = "http://" + strings.TrimPrefix(targetHost, "http://")
+		}
+		targetURL = strings.TrimSuffix(targetURL, "/")
+		http.Redirect(w, r, targetURL+r.URL.RequestURI(), http.StatusTemporaryRedirect)
 
 	})
 
