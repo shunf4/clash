@@ -573,7 +573,7 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 			return
 		}
 		targetURL := targetHost
-		hasHttps := strings.HasPrefix(targetHost, "https://")
+		hasHttps := strings.HasPrefix(targetHost, "https://") || strings.HasPrefix(targetHost, "ftp://")
 		if !hasHttps {
 			targetURL = "http://" + strings.TrimPrefix(targetHost, "http://")
 		}

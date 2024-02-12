@@ -876,9 +876,6 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 						visitorPayloadConnHTTPRedirectRules = append(visitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
 
-						if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
-							visitorHosts[httpRedirectHost] = "127.0.199.199"
-						}
 					}
 				}
 			}
@@ -974,6 +971,10 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		clashraySendListener["rule"] = "clashray-send-rule"
 
 		rawCfg.Hosts["send.clashray.home.arpa"] = "127.0.199.197"
+
+		for httpRedirectHost := range rawCfg.ClashrayHTTPRedirectMap {
+			rawCfg.Hosts[httpRedirectHost] = "127.0.199.199"
+		}
 	}
 
 	rawCfg.Rule = append([]string{"DOMAIN-SUFFIX,test.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-TEST", "DOMAIN-SUFFIX,send.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-SEND"}, rawCfg.Rule...)
