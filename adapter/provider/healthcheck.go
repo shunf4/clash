@@ -57,7 +57,7 @@ func (hc *HealthCheck) process() {
 			if !hc.lazy || since < hc.interval {
 				hc.check()
 			} else {
-				log.Debugln("Skip once health check because we are lazy")
+				// log.Debugln("Skip once health check because we are lazy")
 			}
 		case <-hc.done:
 			ticker.Stop()

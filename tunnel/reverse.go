@@ -53,13 +53,13 @@ type ClashrayNetPublisher struct {
 }
 
 type Clashray struct {
-	ClashrayNetCurrAsPublisher     string                 `yaml:"clashray-net-curr-as-publisher"`
-	ClashrayNetCurrIsAsVisitor     bool                   `yaml:"clashray-net-curr-is-as-visitor"`
-	ClashrayNetDisableHostsTunnels bool                   `yaml:"clashray-net-disable-hosts-tunnels"`
-	ClashraySendDir                string                 `yaml:"clashray-send-dir"`
-	ClashrayNetPublishers          []ClashrayNetPublisher `yaml:"clashray-net-publishers"`
-	ClashrayNetPublishersMap       map[string]*ClashrayNetPublisher
-	ClashrayHTTPRedirectMap        map[string]string
+	ClashrayNetCurrAsPublisher                  string                 `yaml:"clashray-net-curr-as-publisher"`
+	ClashrayNetCurrIsAsVisitor                  bool                   `yaml:"clashray-net-curr-is-as-visitor"`
+	ClashrayNetVisitorTunnelNoHostsNorListening bool                   `yaml:"clashray-net-visitor-tunnel-no-hosts-nor-listening"`
+	ClashraySendDir                             string                 `yaml:"clashray-send-dir"`
+	ClashrayNetPublishers                       []ClashrayNetPublisher `yaml:"clashray-net-publishers"`
+	ClashrayNetPublishersMap                    map[string]*ClashrayNetPublisher
+	ClashrayHTTPRedirectMap                     map[string]string
 }
 
 type ReverseConf struct {

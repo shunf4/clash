@@ -23,9 +23,9 @@ func (s *SlowDown) Wait(ctx context.Context) (err error) {
 func New() *SlowDown {
 	return &SlowDown{
 		backoff: Backoff{
-			Min:    10 * time.Millisecond,
+			Min:    90 * time.Millisecond,
 			Max:    1 * time.Second,
-			Factor: 2,
+			Factor: 2.2,
 			Jitter: true,
 		},
 	}

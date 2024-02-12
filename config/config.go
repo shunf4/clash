@@ -359,12 +359,12 @@ type RawConfig struct {
 
 	ClashForAndroid RawClashForAndroid `yaml:"clash-for-android" json:"clash-for-android"`
 
-	ClashrayNetCurrAsPublisher     string                   `yaml:"clashray-net-curr-as-publisher"`
-	ClashrayNetCurrIsAsVisitor     bool                     `yaml:"clashray-net-curr-is-as-visitor"`
-	ClashrayNetDisableHostsTunnels bool                     `yaml:"clashray-net-disable-hosts-tunnels"`
-	ClashraySendDir                string                   `yaml:"clashray-send-dir"`
-	ClashrayNetPublishers          []T.ClashrayNetPublisher `yaml:"clashray-net-publishers"`
-	ClashrayHTTPRedirectMap        map[string]string        `yaml:"clashray-http-redirect-map"`
+	ClashrayNetCurrAsPublisher                  string                   `yaml:"clashray-net-curr-as-publisher"`
+	ClashrayNetCurrIsAsVisitor                  bool                     `yaml:"clashray-net-curr-is-as-visitor"`
+	ClashrayNetVisitorTunnelNoHostsNorListening bool                     `yaml:"clashray-net-visitor-tunnel-no-hosts-nor-listening"`
+	ClashraySendDir                             string                   `yaml:"clashray-send-dir"`
+	ClashrayNetPublishers                       []T.ClashrayNetPublisher `yaml:"clashray-net-publishers"`
+	ClashrayHTTPRedirectMap                     map[string]string        `yaml:"clashray-http-redirect-map"`
 }
 
 type GeoXUrl struct {
@@ -522,9 +522,9 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 		},
 		ExternalUIURL: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip",
 
-		ClashrayNetCurrAsPublisher:     "",
-		ClashrayNetCurrIsAsVisitor:     false,
-		ClashrayNetDisableHostsTunnels: false,
+		ClashrayNetCurrAsPublisher:                  "",
+		ClashrayNetCurrIsAsVisitor:                  false,
+		ClashrayNetVisitorTunnelNoHostsNorListening: false,
 	}
 
 	if err := yaml.Unmarshal(buf, rawCfg); err != nil {
@@ -543,7 +543,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 	config.Clashray.ClashrayNetCurrAsPublisher = rawCfg.ClashrayNetCurrAsPublisher
 	config.Clashray.ClashrayNetCurrIsAsVisitor = rawCfg.ClashrayNetCurrIsAsVisitor
-	config.Clashray.ClashrayNetDisableHostsTunnels = rawCfg.ClashrayNetDisableHostsTunnels
+	config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening = rawCfg.ClashrayNetVisitorTunnelNoHostsNorListening
 	config.Clashray.ClashrayHTTPRedirectMap = rawCfg.ClashrayHTTPRedirectMap
 	config.Clashray.ClashraySendDir = rawCfg.ClashraySendDir
 	config.Clashray.ClashrayNetPublishers = rawCfg.ClashrayNetPublishers
@@ -815,7 +815,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 					tunnelName := "clashray-net-" + p.Name + "-svc-" + strconv.Itoa(si) + "-tunnel-" + strconv.Itoa(spi-4)
 
-					if !config.Clashray.ClashrayNetDisableHostsTunnels {
+					if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
 						if vtListenPort > 0 {
 							if _, found := visitorTunnelDedup[vtListenHost+":"+vtListenPortStr]; !found {
 								currListener := make(map[string]interface{})
@@ -831,31 +831,31 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 							visitorTunnelDedup[vtListenHost+":"+vtListenPortStr] = true
 						}
 
-						if vtListenPort > 0 {
-							visitorNotPublisherPayloadConnSvcRules = append(
-								visitorNotPublisherPayloadConnSvcRules,
-								"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+currContactProxyGroupName+":::"+sHost,
-							)
-							if isVisitor && isCurrentPublisher {
-								publisherPayloadConnSvcRules = append(
-									publisherPayloadConnSvcRules,
-									"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
-								)
-							}
-						} else {
-							visitorNotPublisherPayloadConnSvcRules = append(
-								visitorNotPublisherPayloadConnSvcRules,
-								"IP-CIDR,"+vtListenHost+"/32,"+currContactProxyGroupName+":::"+sHost+",no-resolve",
-							)
-							if isVisitor && isCurrentPublisher {
-								publisherPayloadConnSvcRules = append(
-									publisherPayloadConnSvcRules,
-									"IP-CIDR,"+vtListenHost+"/32,"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort+",no-resolve",
-								)
-							}
-						}
-
 						visitorHosts[vtHostWildcard] = vtListenHost
+					}
+
+					if vtListenPort > 0 {
+						visitorNotPublisherPayloadConnSvcRules = append(
+							visitorNotPublisherPayloadConnSvcRules,
+							"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+currContactProxyGroupName+":::"+sHost,
+						)
+						if isVisitor && isCurrentPublisher {
+							publisherPayloadConnSvcRules = append(
+								publisherPayloadConnSvcRules,
+								"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
+							)
+						}
+					} else {
+						visitorNotPublisherPayloadConnSvcRules = append(
+							visitorNotPublisherPayloadConnSvcRules,
+							"IP-CIDR,"+vtListenHost+"/32,"+currContactProxyGroupName+":::"+sHost+",no-resolve",
+						)
+						if isVisitor && isCurrentPublisher {
+							publisherPayloadConnSvcRules = append(
+								publisherPayloadConnSvcRules,
+								"IP-CIDR,"+vtListenHost+"/32,"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort+",no-resolve",
+							)
+						}
 					}
 
 					if len(vtParts) >= 4 {
@@ -876,7 +876,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 						visitorPayloadConnHTTPRedirectRules = append(visitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
 
-						if !config.Clashray.ClashrayNetDisableHostsTunnels {
+						if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
 							visitorHosts[httpRedirectHost] = "127.0.199.199"
 						}
 					}
@@ -936,7 +936,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		log.Warnln("clashray-net: warn: ClashrayNetCurrAsPublisher [%s] never matched", config.Clashray.ClashrayNetCurrAsPublisher)
 	}
 
-	if !config.Clashray.ClashrayNetDisableHostsTunnels {
+	if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
 		httpRedirectListener := make(map[string]interface{})
 		rawCfg.Listeners = append(rawCfg.Listeners, httpRedirectListener)
 		httpRedirectListener["name"] = "clashray-http-redirect-listener"
@@ -946,10 +946,6 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		httpRedirectListener["network"] = []string{"tcp"}
 		httpRedirectListener["target"] = "0.0.0.0" + ":" + "0"
 		httpRedirectListener["rule"] = "clashray-http-redirect-rule"
-
-		rawCfg.SubRules["clashray-http-redirect-rule"] = []string{
-			"MATCH,INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT",
-		}
 
 		clashrayTestListener := make(map[string]interface{})
 		rawCfg.Listeners = append(rawCfg.Listeners, clashrayTestListener)
@@ -977,14 +973,16 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		clashraySendListener["target"] = "0.0.0.0" + ":" + "0"
 		clashraySendListener["rule"] = "clashray-send-rule"
 
-		rawCfg.SubRules["clashray-send-rule"] = []string{
-			"MATCH,INTERNAL-HTTP:::CLASHRAY-SEND",
-		}
-
 		rawCfg.Hosts["send.clashray.home.arpa"] = "127.0.199.197"
 	}
 
 	rawCfg.Rule = append([]string{"DOMAIN-SUFFIX,test.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-TEST", "DOMAIN-SUFFIX,send.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-SEND"}, rawCfg.Rule...)
+	rawCfg.SubRules["clashray-http-redirect-rule"] = []string{
+		"MATCH,INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT",
+	}
+	rawCfg.SubRules["clashray-send-rule"] = []string{
+		"MATCH,INTERNAL-HTTP:::CLASHRAY-SEND",
+	}
 
 	////// shunf4 mod: clashray-net: end
 

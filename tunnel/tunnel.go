@@ -2,7 +2,6 @@ package tunnel
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -729,14 +728,38 @@ func getRules(metadata *C.Metadata) []C.Rule {
 	}
 }
 
-func shouldStopRetry(err error) bool {
-	if errors.Is(err, resolver.ErrIPNotFound) {
+func shouldStopRetry(err error, i *int, ctx context.Context) bool {
+	return true
+	errStr := err.Error()
+	// shunf4: many places in the code base uses fmt.Errorf("..., %s", err.Error()), so errors.Is() is no feasible...
+	// if errors.Is(err, resolver.ErrIPNotFound) {
+	if strings.Contains(errStr, "can't resolve ip") || strings.Contains(errStr, "dns resolve failed") {
+		// log.Warnln("error resolving, wait more time")
+		*i += 2
+		select {
+		case <-time.After(300 * time.Millisecond):
+		case <-ctx.Done():
+			return true
+		}
 		return true
 	}
-	if errors.Is(err, resolver.ErrIPVersion) {
+	// if errors.Is(err, resolver.ErrIPVersion) {
+	if strings.Contains(errStr, "ip version error") {
 		return true
 	}
-	if errors.Is(err, resolver.ErrIPv6Disabled) {
+	// if errors.Is(err, resolver.ErrIPv6Disabled) {
+	if strings.Contains(errStr, "ipv6 disabled") {
+		return true
+	}
+	// if errors.Is(err, syscall.Errno(syscall.ENETUNREACH)) {
+	if strings.Contains(errStr, "network is unreachable") {
+		// log.Warnln("ENETUNREACH, wait more time")
+		*i += 2
+		select {
+		case <-time.After(300 * time.Millisecond):
+		case <-ctx.Done():
+			return true
+		}
 		return true
 	}
 	return false
@@ -744,13 +767,13 @@ func shouldStopRetry(err error) bool {
 
 func retry[T any](ctx context.Context, ft func(context.Context) (T, error), fe func(err error)) (t T, err error) {
 	s := slowdown.New()
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 5; i++ {
 		t, err = ft(ctx)
 		if err != nil {
 			if fe != nil {
 				fe(err)
 			}
-			if shouldStopRetry(err) {
+			if shouldStopRetry(err, &i, ctx) {
 				return
 			}
 			if s.Wait(ctx) == nil {
