@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"math"
 	"mime"
 	"net"
 	"net/http"
@@ -154,6 +155,14 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 		panic(err)
 	}
 
+	if clashrayConfig.ClashraySendHistoryMaxSize == 0 {
+		clashrayConfig.ClashraySendHistoryMaxSize = 60
+	}
+
+	if clashrayConfig.ClashraySendHistoryMaxSize >= math.MaxInt32 {
+		clashrayConfig.ClashraySendHistoryMaxSize = math.MaxInt32 - 1
+	}
+
 	if clashrayConfig.ClashraySendDir != "" {
 		os.MkdirAll(clashrayConfig.ClashraySendDir, os.FileMode(0o750))
 
@@ -192,8 +201,9 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 					historyList = make([]historyData, 0)
 				}
 			}
-			if len(historyList) >= 30 {
-				historyList = historyList[:29]
+
+			if len(historyList) >= int(clashrayConfig.ClashraySendHistoryMaxSize) {
+				historyList = historyList[:int(clashrayConfig.ClashraySendHistoryMaxSize)-1]
 			}
 			historyList = append([]historyData{
 				{

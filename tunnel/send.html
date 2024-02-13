@@ -322,17 +322,22 @@
 
         if (t === "text") {
           activeEl(sText);
-          showEl(pText);
+          sendData.currentPane = pText;
           sendData.type = t;
         } else if (t === "image") {
           activeEl(sImage);
-          showEl(pImage);
+          sendData.currentPane = pImage;
           sendData.type = t;
         } else if (t === "file") {
           activeEl(sFile);
-          showEl(pFile);
+          sendData.currentPane = pFile;
+          sendData.type = t;
+        } else {
+          activeEl(sText);
+          sendData.currentPane = pText;
           sendData.type = t;
         }
+        showEl(sendData.currentPane);
       };
 
       sText.onclick = () => { selectFunc("text"); };
@@ -473,7 +478,7 @@
 
     document.body.addEventListener('keydown', (event) => {
       if(event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-        event.target.form?.submit();
+        sendData.currentPane?.querySelector("form")?.submit();
       }
     });
 

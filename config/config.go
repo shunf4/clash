@@ -363,6 +363,7 @@ type RawConfig struct {
 	ClashrayNetCurrIsAsVisitor                  bool                     `yaml:"clashray-net-curr-is-as-visitor"`
 	ClashrayNetVisitorTunnelNoHostsNorListening bool                     `yaml:"clashray-net-visitor-tunnel-no-hosts-nor-listening"`
 	ClashraySendDir                             string                   `yaml:"clashray-send-dir"`
+	ClashraySendHistoryMaxSize                  uint32                   `yaml:"clashray-send-history-max-size"`
 	ClashrayNetPublishers                       []T.ClashrayNetPublisher `yaml:"clashray-net-publishers"`
 	ClashrayHTTPRedirectMap                     map[string]string        `yaml:"clashray-http-redirect-map"`
 }
@@ -546,6 +547,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening = rawCfg.ClashrayNetVisitorTunnelNoHostsNorListening
 	config.Clashray.ClashrayHTTPRedirectMap = rawCfg.ClashrayHTTPRedirectMap
 	config.Clashray.ClashraySendDir = rawCfg.ClashraySendDir
+	config.Clashray.ClashraySendHistoryMaxSize = rawCfg.ClashraySendHistoryMaxSize
 	config.Clashray.ClashrayNetPublishers = rawCfg.ClashrayNetPublishers
 	pMap := make(map[string]*T.ClashrayNetPublisher)
 	config.Clashray.ClashrayNetPublishersMap = pMap
@@ -617,6 +619,15 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 		for lci := range p.LanContacts {
 			lc := &p.LanContacts[lci]
+			if useExistingProxy, found := (*lc)["useExistingProxy"]; found {
+				if useExistingProxy, convOk := useExistingProxy.(string); convOk {
+					currLanContactName := useExistingProxy
+					if isVisitorAndNotCurrentPublisher {
+						newProxyGroup["proxies"] = append(newProxyGroup["proxies"].([]string), currLanContactName)
+					}
+					continue
+				}
+			}
 			var fullLanContact map[string]interface{}
 			if p.LanContactsCommonFields != nil {
 				fullLanContact = make(map[string]interface{})

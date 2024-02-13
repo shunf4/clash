@@ -57,6 +57,7 @@ type Clashray struct {
 	ClashrayNetCurrIsAsVisitor                  bool                   `yaml:"clashray-net-curr-is-as-visitor"`
 	ClashrayNetVisitorTunnelNoHostsNorListening bool                   `yaml:"clashray-net-visitor-tunnel-no-hosts-nor-listening"`
 	ClashraySendDir                             string                 `yaml:"clashray-send-dir"`
+	ClashraySendHistoryMaxSize                  uint32                 `yaml:"clashray-send-history-max-size"`
 	ClashrayNetPublishers                       []ClashrayNetPublisher `yaml:"clashray-net-publishers"`
 	ClashrayNetPublishersMap                    map[string]*ClashrayNetPublisher
 	ClashrayHTTPRedirectMap                     map[string]string
