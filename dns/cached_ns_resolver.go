@@ -103,7 +103,7 @@ func (cnc *cachedNameserversClient) ExchangeContext(ctx context.Context, m *D.Ms
 	} else {
 		if ip.Equal(net.IPv4zero) {
 			cnc.mu.Unlock()
-			err := fmt.Errorf("got cached IP <IPv4zero>, not resolving (until next update)")
+			err := fmt.Errorf("%s: got cached nameserver IP <IPv4zero>, not resolving (until next update)", cnc.clientName)
 			log.Warnln(err.Error())
 			return nil, err
 		}
