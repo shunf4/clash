@@ -13,6 +13,7 @@ import (
 
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/constant/features"
+	"github.com/metacubex/mihomo/log"
 )
 
 const (
@@ -308,6 +309,7 @@ func serialDialContext(ctx context.Context, network string, ips []netip.Addr, po
 	}
 	var errs []error
 	for _, ip := range ips {
+		log.Infoln("serialDialContext: network=%s, ip=%s, port=%s", network, ip.String(), port)
 		if conn, err := dialContext(ctx, network, ip, port, opt); err == nil {
 			return conn, nil
 		} else {
@@ -354,11 +356,14 @@ func parseAddr(ctx context.Context, network, address string, preferResolver reso
 	if err != nil {
 		return nil, "-1", fmt.Errorf("dns resolve failed: %w", err)
 	}
+	ipStrs := []string{}
 	for i, ip := range ips {
 		if ip.Is4In6() {
 			ips[i] = ip.Unmap()
 		}
+		ipStrs = append(ipStrs, ips[i].String())
 	}
+	log.Infoln("parseAddr: network=%s, host=%s, preferResolver=%p, ips=%s", network, host, preferResolver, ipStrs)
 	return ips, port, nil
 }
 
