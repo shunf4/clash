@@ -61,6 +61,13 @@ type Clashray struct {
 	ClashrayNetPublishers                       []ClashrayNetPublisher `yaml:"clashray-net-publishers"`
 	ClashrayNetPublishersMap                    map[string]*ClashrayNetPublisher
 	ClashrayHTTPRedirectMap                     map[string]string
+
+	ClashrayNetHTTPRedirectLocalListenAddr string `yaml:"clashray-net-http-redirect-local-listen-addr"`
+	ClashrayNetHTTPRedirectLocalListenPort uint16 `yaml:"clashray-net-http-redirect-local-listen-port-yes-i-dont-want-80"`
+	ClashrayTestLocalListenAddr            string `yaml:"clashray-test-local-listen-addr"`
+	ClashrayTestLocalListenPort            uint16 `yaml:"clashray-test-local-listen-port-yes-i-dont-want-80"`
+	ClashraySendLocalListenAddr            string `yaml:"clashray-send-local-listen-addr"`
+	ClashraySendLocalListenPort            uint16 `yaml:"clashray-send-local-listen-port-yes-i-dont-want-80"`
 }
 
 type ReverseConf struct {

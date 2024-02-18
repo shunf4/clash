@@ -362,6 +362,12 @@ type RawConfig struct {
 	ClashrayNetCurrAsPublisher                  string                   `yaml:"clashray-net-curr-as-publisher"`
 	ClashrayNetCurrIsAsVisitor                  bool                     `yaml:"clashray-net-curr-is-as-visitor"`
 	ClashrayNetVisitorTunnelNoHostsNorListening bool                     `yaml:"clashray-net-visitor-tunnel-no-hosts-nor-listening"`
+	ClashrayNetHTTPRedirectLocalListenAddr      string                   `yaml:"clashray-net-http-redirect-local-listen-addr"`
+	ClashrayNetHTTPRedirectLocalListenPort      uint16                   `yaml:"clashray-net-http-redirect-local-listen-port-yes-i-dont-want-80"`
+	ClashrayTestLocalListenAddr                 string                   `yaml:"clashray-test-local-listen-addr"`
+	ClashrayTestLocalListenPort                 uint16                   `yaml:"clashray-test-local-listen-port-yes-i-dont-want-80"`
+	ClashraySendLocalListenAddr                 string                   `yaml:"clashray-send-local-listen-addr"`
+	ClashraySendLocalListenPort                 uint16                   `yaml:"clashray-send-local-listen-port-yes-i-dont-want-80"`
 	ClashraySendDir                             string                   `yaml:"clashray-send-dir"`
 	ClashraySendHistoryMaxSize                  uint32                   `yaml:"clashray-send-history-max-size"`
 	ClashrayNetPublishers                       []T.ClashrayNetPublisher `yaml:"clashray-net-publishers"`
@@ -545,6 +551,12 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	config.Clashray.ClashrayNetCurrAsPublisher = rawCfg.ClashrayNetCurrAsPublisher
 	config.Clashray.ClashrayNetCurrIsAsVisitor = rawCfg.ClashrayNetCurrIsAsVisitor
 	config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening = rawCfg.ClashrayNetVisitorTunnelNoHostsNorListening
+	config.Clashray.ClashrayNetHTTPRedirectLocalListenAddr = rawCfg.ClashrayNetHTTPRedirectLocalListenAddr
+	config.Clashray.ClashrayNetHTTPRedirectLocalListenPort = rawCfg.ClashrayNetHTTPRedirectLocalListenPort
+	config.Clashray.ClashrayTestLocalListenAddr = rawCfg.ClashrayTestLocalListenAddr
+	config.Clashray.ClashrayTestLocalListenPort = rawCfg.ClashrayTestLocalListenPort
+	config.Clashray.ClashraySendLocalListenAddr = rawCfg.ClashraySendLocalListenAddr
+	config.Clashray.ClashraySendLocalListenPort = rawCfg.ClashraySendLocalListenPort
 	config.Clashray.ClashrayHTTPRedirectMap = rawCfg.ClashrayHTTPRedirectMap
 	config.Clashray.ClashraySendDir = rawCfg.ClashraySendDir
 	config.Clashray.ClashraySendHistoryMaxSize = rawCfg.ClashraySendHistoryMaxSize
@@ -587,44 +599,40 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		if _, found := pMap[p.Name]; found {
 			return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers Name=%s is duplicate", p.Name)
 		}
-		isCurrentPublisher := false
-		if config.Clashray.ClashrayNetCurrAsPublisher == p.Name {
-			isCurrentPublisher = true
-			publisherEverMatched = true
-		}
-		isVisitor := config.Clashray.ClashrayNetCurrIsAsVisitor
-		isVisitorAndNotCurrentPublisher := isVisitor && !isCurrentPublisher
+
 		pMap[p.Name] = p
 		if p.ContactProxyGroupFallbackInterval < 5 || p.ContactProxyGroupFallbackInterval > 86400*1000*7 {
 			return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s): ContactProxyGroupFallbackInterval is invalid (%d)", p.Name, p.ContactProxyGroupFallbackInterval)
 		}
 
 		currContactProxyGroupName := "clashray-net-" + p.Name + "-contact"
-		payloadConnRuleName := "clashray-net-" + p.Name + "-payload-conn-rule"
-		payloadConnFinalRuleName := "clashray-net-" + p.Name + "-payload-conn-rule-final"
+		payloadConnNonLocalRuleName := "clashray-net-" + p.Name + "-payload-conn-non-local-rule"
+		payloadConnNonLocalFinalRuleName := "clashray-net-" + p.Name + "-payload-conn-non-local-rule-final"
+		payloadConnLocalOnlyRuleName := "clashray-net-" + p.Name + "-payload-conn-local-only-rule"
+		payloadConnLocalAndNonLocalFinalRuleName := "clashray-net-" + p.Name + "-payload-conn-local-and-non-local-rule-final"
 
-		var newProxyGroup map[string]interface{}
-		if isVisitorAndNotCurrentPublisher {
-			newProxyGroup = make(map[string]interface{})
-			newProxyGroup["name"] = currContactProxyGroupName
-			newProxyGroup["type"] = "fallback"
-			newProxyGroup["proxies"] = []string{}
-			newProxyGroup["url"] = p.ContactHealthcheckURL
-			newProxyGroup["interval"] = p.ContactProxyGroupFallbackInterval
-			newProxyGroup["lazy"] = p.ContactProxyGroupFallbackIsLazy
-			rawCfg.ProxyGroup = append(rawCfg.ProxyGroup, newProxyGroup)
-		}
+		visitorNotPublisherProxies := []map[string]any{}
+		visitorNotPublisherProxyGroups := []map[string]any{}
+
+		var visitorNotPublisherContactProxyGroup map[string]interface{}
+		visitorNotPublisherContactProxyGroup = make(map[string]interface{})
+		visitorNotPublisherContactProxyGroup["name"] = currContactProxyGroupName
+		visitorNotPublisherContactProxyGroup["type"] = "fallback"
+		visitorNotPublisherContactProxyGroup["proxies"] = []string{}
+		visitorNotPublisherContactProxyGroup["url"] = p.ContactHealthcheckURL
+		visitorNotPublisherContactProxyGroup["interval"] = p.ContactProxyGroupFallbackInterval
+		visitorNotPublisherContactProxyGroup["lazy"] = p.ContactProxyGroupFallbackIsLazy
+		visitorNotPublisherProxyGroups = append(visitorNotPublisherProxyGroups, visitorNotPublisherContactProxyGroup)
 
 		publisherLanContactListeners := []map[string]interface{}{}
 
 		for lci := range p.LanContacts {
 			lc := &p.LanContacts[lci]
+			// useExistingProxy at the same time means "not listening on the publisher side"
 			if useExistingProxy, found := (*lc)["useExistingProxy"]; found {
 				if useExistingProxy, convOk := useExistingProxy.(string); convOk {
 					currLanContactName := useExistingProxy
-					if isVisitorAndNotCurrentPublisher {
-						newProxyGroup["proxies"] = append(newProxyGroup["proxies"].([]string), currLanContactName)
-					}
+					visitorNotPublisherContactProxyGroup["proxies"] = append(visitorNotPublisherContactProxyGroup["proxies"].([]string), currLanContactName)
 					continue
 				}
 			}
@@ -638,15 +646,13 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			}
 			currLanContactName := "clashray-net-" + p.Name + "-lan-contact-" + strconv.Itoa(lci)
 			fullLanContact["name"] = currLanContactName
-			if isVisitorAndNotCurrentPublisher {
-				rawCfg.Proxy = append(rawCfg.Proxy, fullLanContact)
-				newProxyGroup["proxies"] = append(newProxyGroup["proxies"].([]string), currLanContactName)
-			}
-			if isCurrentPublisher {
+			visitorNotPublisherProxies = append(visitorNotPublisherProxies, fullLanContact)
+			visitorNotPublisherContactProxyGroup["proxies"] = append(visitorNotPublisherContactProxyGroup["proxies"].([]string), currLanContactName)
+			{
 				currLanContactListenerName := currLanContactName
 				currLanContactListener := map[string]interface{}{}
 				currLanContactListener["name"] = currLanContactListenerName
-				currLanContactListener["rule"] = payloadConnFinalRuleName
+				currLanContactListener["rule"] = payloadConnNonLocalFinalRuleName
 				switch fullLanContact["type"] {
 				case "vmess":
 					currLanContactListener["type"] = "vmess"
@@ -716,14 +722,14 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		for rci := range p.ReverseContacts {
 			rc := &p.ReverseContacts[rci]
 			publisherBridgeConnRuleName := "clashray-net-" + p.Name + "-bridge-conn-rule-" + strconv.Itoa(rci) + "-" + rc.BridgeConnProxy
-			if isVisitorAndNotCurrentPublisher {
+			{
 				visitorProxy := rc.VisitorProxy
 				if visitorProxy == "" {
 					visitorProxy = rc.BridgeConnProxy
 				}
-				newProxyGroup["proxies"] = append(newProxyGroup["proxies"].([]string), visitorProxy)
+				visitorNotPublisherContactProxyGroup["proxies"] = append(visitorNotPublisherContactProxyGroup["proxies"].([]string), visitorProxy)
 			}
-			if isCurrentPublisher {
+			{
 				publisherBridgeConnRules[publisherBridgeConnRuleName] = []string{
 					"MATCH," + rc.BridgeConnProxy,
 				}
@@ -731,21 +737,30 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 				publisherReverses = append(publisherReverses, T.ReverseConf{
 					ReverseIdentDomain: rc.ReverseIdentDomain,
 					BridgeConnSubRule:  publisherBridgeConnRuleName,
-					PayloadConnSubRule: payloadConnFinalRuleName,
+					PayloadConnSubRule: payloadConnNonLocalFinalRuleName,
 					WorkerNum:          rc.WorkerNum,
 					RetryDelayMillisec: rc.RetryDelayMillisec,
 				})
 			}
 		}
 
-		visitorPayloadConnHTTPRedirectRules := []string{}
+		visitorNotPublisherPayloadConnHTTPRedirectRules := []string{}
+		publisherAlsoVisitorPayloadConnHTTPRedirectRules := []string{}
+		visitorNotPublisherHTTPRedirectMap := map[string]string{}
+		publisherAlsoVisitorHTTPRedirectMap := map[string]string{}
+
 		visitorNotPublisherPayloadConnSvcRules := []string{}
-		publisherPayloadConnSvcRules := []string{}
-		visitorTunnelListeners := []map[string]interface{}{}
-		visitorHosts := map[string]interface{}{}
+		publisherNonLocalPayloadConnSvcRules := []string{}
+		publisherLocalOnlyPayloadConnSvcRules := []string{}
+		visitorNotPublisherVisitorTunnelListeners := []map[string]interface{}{}
+		publisherVisitorTunnelListeners := []map[string]interface{}{}
+		visitorNotPublisherHosts := map[string]interface{}{}
+		publisherAlsoVisitorHosts := map[string]interface{}{}
 
 		for si := range p.Services {
 			s := p.Services[si]
+			isLocalOnly := false
+			s, isLocalOnly = strings.CutPrefix(s, "LOCAL-ONLY,")
 			sParts := strings.Split(s, ",")
 			for spi := range sParts {
 				sParts[spi] = strings.TrimSpace(sParts[spi])
@@ -783,10 +798,15 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 				sRealDestPort = ":::" + sRealDestPort
 			}
 
-			visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, currContactProxyGroupName))
-			publisherPayloadConnSvcRules = append(publisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort))
+			if isLocalOnly {
+				publisherLocalOnlyPayloadConnSvcRules = append(publisherLocalOnlyPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort))
+			} else {
+				visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, currContactProxyGroupName))
+				publisherNonLocalPayloadConnSvcRules = append(publisherNonLocalPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort))
+			}
 
-			visitorTunnelDedup := map[string]bool{}
+			visitorNotPublisherVisitorTunnelDedup := map[string]bool{}
+			publisherVisitorTunnelDedup := map[string]bool{}
 			for spi := 4; spi < len(sParts); spi++ {
 				opt := sParts[spi]
 				if vt, ok := strings.CutPrefix(opt, "visitortunnel="); ok {
@@ -826,44 +846,76 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 					tunnelName := "clashray-net-" + p.Name + "-svc-" + strconv.Itoa(si) + "-tunnel-" + strconv.Itoa(spi-4)
 
-					if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
-						if vtListenPort > 0 {
-							if _, found := visitorTunnelDedup[vtListenHost+":"+vtListenPortStr]; !found {
+					if vtListenPort > 0 {
+						if !isLocalOnly {
+							if _, found := visitorNotPublisherVisitorTunnelDedup[vtListenHost+":"+vtListenPortStr]; !found {
 								currListener := make(map[string]interface{})
-								visitorTunnelListeners = append(visitorTunnelListeners, currListener)
+								visitorNotPublisherVisitorTunnelListeners = append(visitorNotPublisherVisitorTunnelListeners, currListener)
 								currListener["name"] = tunnelName
 								currListener["type"] = "tunnel"
 								currListener["listen"] = vtListenHost
 								currListener["port"] = vtListenPort
 								currListener["network"] = []string{"tcp"}
 								currListener["target"] = sHost + ":" + vtListenPortStr
-								currListener["rule"] = payloadConnFinalRuleName
+								currListener["rule"] = payloadConnNonLocalFinalRuleName
+
+								visitorNotPublisherVisitorTunnelDedup[vtListenHost+":"+vtListenPortStr] = true
 							}
-							visitorTunnelDedup[vtListenHost+":"+vtListenPortStr] = true
 						}
 
-						visitorHosts[vtHostWildcard] = vtListenHost
+						if _, found := publisherVisitorTunnelDedup[vtListenHost+":"+vtListenPortStr]; !found {
+							currListener := make(map[string]interface{})
+							publisherVisitorTunnelListeners = append(publisherVisitorTunnelListeners, currListener)
+							currListener["name"] = tunnelName
+							currListener["type"] = "tunnel"
+							currListener["listen"] = vtListenHost
+							currListener["port"] = vtListenPort
+							currListener["network"] = []string{"tcp"}
+							currListener["target"] = sHost + ":" + vtListenPortStr
+							currListener["rule"] = payloadConnLocalAndNonLocalFinalRuleName
+
+							publisherVisitorTunnelDedup[vtListenHost+":"+vtListenPortStr] = true
+						}
 					}
 
+					if !isLocalOnly {
+						visitorNotPublisherHosts[vtHostWildcard] = vtListenHost
+					}
+					publisherAlsoVisitorHosts[vtHostWildcard] = vtListenHost
+
 					if vtListenPort > 0 {
-						visitorNotPublisherPayloadConnSvcRules = append(
-							visitorNotPublisherPayloadConnSvcRules,
-							"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+currContactProxyGroupName+":::"+sHost,
-						)
-						if isVisitor && isCurrentPublisher {
-							publisherPayloadConnSvcRules = append(
-								publisherPayloadConnSvcRules,
+						if !isLocalOnly {
+							visitorNotPublisherPayloadConnSvcRules = append(
+								visitorNotPublisherPayloadConnSvcRules,
+								"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+currContactProxyGroupName+":::"+sHost,
+							)
+						}
+						if !isLocalOnly {
+							publisherNonLocalPayloadConnSvcRules = append(
+								publisherNonLocalPayloadConnSvcRules,
+								"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
+							)
+						} else {
+							publisherLocalOnlyPayloadConnSvcRules = append(
+								publisherLocalOnlyPayloadConnSvcRules,
 								"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
 							)
 						}
 					} else {
-						visitorNotPublisherPayloadConnSvcRules = append(
-							visitorNotPublisherPayloadConnSvcRules,
-							"IP-CIDR,"+vtListenHost+"/32,"+currContactProxyGroupName+":::"+sHost+",no-resolve",
-						)
-						if isVisitor && isCurrentPublisher {
-							publisherPayloadConnSvcRules = append(
-								publisherPayloadConnSvcRules,
+						if !isLocalOnly {
+							visitorNotPublisherPayloadConnSvcRules = append(
+								visitorNotPublisherPayloadConnSvcRules,
+								"IP-CIDR,"+vtListenHost+"/32,"+currContactProxyGroupName+":::"+sHost+",no-resolve",
+							)
+						}
+						if !isLocalOnly {
+							publisherNonLocalPayloadConnSvcRules = append(
+								publisherNonLocalPayloadConnSvcRules,
+								"IP-CIDR,"+vtListenHost+"/32,"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort+",no-resolve",
+							)
+						} else {
+							publisherLocalOnlyPayloadConnSvcRules = append(
+								publisherLocalOnlyPayloadConnSvcRules,
 								"IP-CIDR,"+vtListenHost+"/32,"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort+",no-resolve",
 							)
 						}
@@ -878,66 +930,119 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 							return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad visitortunnel-httpredirect option, vtParts[3] %s expected starting with httpredirect=", p.Name, si, vtParts[3])
 						}
 
-						config.Clashray.ClashrayHTTPRedirectMap[httpRedirectHost] = vtListenHost
+						httpRedirectTarget := vtListenHost
 						if vtListenPort > 0 {
-							config.Clashray.ClashrayHTTPRedirectMap[httpRedirectHost] += ":" + vtListenPortStr
+							httpRedirectTarget += ":" + vtListenPortStr
 						} else if sRealDestPort != "" {
 							// TODO: use sRealDestPort?
 						}
 
-						visitorPayloadConnHTTPRedirectRules = append(visitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
+						if !isLocalOnly {
+							visitorNotPublisherHTTPRedirectMap[httpRedirectHost] = httpRedirectTarget
+							visitorNotPublisherPayloadConnHTTPRedirectRules = append(visitorNotPublisherPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
+						}
 
+						publisherAlsoVisitorHTTPRedirectMap[httpRedirectHost] = httpRedirectTarget
+						publisherAlsoVisitorPayloadConnHTTPRedirectRules = append(publisherAlsoVisitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
 					}
 				}
 			}
 		}
 
-		if isCurrentPublisher {
-			maps.Copy(rawCfg.SubRules, publisherBridgeConnRules)
+		if strings.TrimPrefix(p.ContactHealthcheckURL, "http://") == "" {
+			return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s): bad ContactHealthcheckURL: %s", p.Name, p.ContactHealthcheckURL)
+		}
+		visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules,
+			fmt.Sprintf("%s,%s,%s", "DOMAIN", strings.TrimPrefix(p.ContactHealthcheckURL, "http://"), currContactProxyGroupName),
+		)
+		if strings.TrimPrefix(p.ContactSendURL, "http://") != "" {
+			visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules,
+				fmt.Sprintf("%s,%s,%s", "DOMAIN", strings.TrimPrefix(p.ContactSendURL, "http://"), currContactProxyGroupName),
+			)
 		}
 
-		payloadConnSubRule := []string{}
-
-		if isVisitor {
-			payloadConnSubRule = append(payloadConnSubRule, visitorPayloadConnHTTPRedirectRules...)
-		}
-		if isCurrentPublisher {
-			payloadConnSubRule = append(payloadConnSubRule,
-				"DOMAIN,"+strings.TrimPrefix(p.ContactHealthcheckURL, "http://")+",INTERNAL-HTTP:::CLASHRAY-TEST",
+		publisherNonLocalPayloadConnSvcRules = append(publisherNonLocalPayloadConnSvcRules,
+			"DOMAIN,"+strings.TrimPrefix(p.ContactHealthcheckURL, "http://")+",INTERNAL-HTTP:::CLASHRAY-TEST",
+		)
+		if strings.TrimPrefix(p.ContactSendURL, "http://") != "" {
+			publisherNonLocalPayloadConnSvcRules = append(publisherNonLocalPayloadConnSvcRules,
 				"DOMAIN,"+strings.TrimPrefix(p.ContactSendURL, "http://")+",INTERNAL-HTTP:::CLASHRAY-SEND",
 			)
+		}
 
-			payloadConnSubRule = append(payloadConnSubRule,
-				publisherPayloadConnSvcRules...,
+		// finally mutating config according to current role (publisher and/or visitor)
+
+		isCurrentPublisher := false
+		if config.Clashray.ClashrayNetCurrAsPublisher == p.Name {
+			isCurrentPublisher = true
+			publisherEverMatched = true
+		}
+		isVisitor := config.Clashray.ClashrayNetCurrIsAsVisitor
+
+		payloadConnNonLocalSubRule := []string{}
+		payloadConnLocalOnlySubRule := []string{}
+		payloadConnNonLocalFinalSubRule := []string{"SUB-RULE,(NETWORK,tcp)," + payloadConnNonLocalRuleName, "MATCH,REJECT"}
+		payloadConnLocalAndNonLocalFinalSubRule := []string{"SUB-RULE,(NETWORK,tcp)," + payloadConnLocalOnlyRuleName, "SUB-RULE,(NETWORK,tcp)," + payloadConnNonLocalRuleName, "MATCH,REJECT"}
+
+		publisherAction := func() {
+			maps.Copy(rawCfg.SubRules, publisherBridgeConnRules)
+
+			payloadConnNonLocalSubRule = append(payloadConnNonLocalSubRule,
+				publisherNonLocalPayloadConnSvcRules...,
 			)
-		}
-		if isVisitorAndNotCurrentPublisher {
-			visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", strings.TrimPrefix(p.ContactHealthcheckURL, "http://"), currContactProxyGroupName))
-			visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", strings.TrimPrefix(p.ContactSendURL, "http://"), currContactProxyGroupName))
-			payloadConnSubRule = append(payloadConnSubRule, visitorNotPublisherPayloadConnSvcRules...)
-		}
+			payloadConnLocalOnlySubRule = append(payloadConnLocalOnlySubRule,
+				publisherLocalOnlyPayloadConnSvcRules...,
+			)
 
-		payloadConnFinalSubRule := []string{}
-		payloadConnFinalSubRule = append(payloadConnFinalSubRule, "SUB-RULE,(NETWORK,tcp),"+payloadConnRuleName, "MATCH,REJECT")
-
-		if isVisitor || isCurrentPublisher {
-			rawCfg.SubRules[payloadConnRuleName] = payloadConnSubRule
-			rawCfg.SubRules[payloadConnFinalRuleName] = payloadConnFinalSubRule
-			rawCfg.Rule = append([]string{"SUB-RULE,(NETWORK,tcp)," + payloadConnRuleName}, rawCfg.Rule...)
-		}
-
-		if isCurrentPublisher {
 			rawCfg.Listeners = append(rawCfg.Listeners, publisherLanContactListeners...)
-		}
-
-		if isVisitor {
-			rawCfg.Listeners = append(rawCfg.Listeners, visitorTunnelListeners...)
-			maps.Copy(rawCfg.Hosts, visitorHosts)
-		}
-
-		if isCurrentPublisher {
 			rawCfg.Reverses = append(rawCfg.Reverses, publisherReverses...)
 		}
+
+		// if isVisitor || isCurrentPublisher {
+		addPayloadNonLocalRulesAction := func() {
+			rawCfg.SubRules[payloadConnNonLocalRuleName] = payloadConnNonLocalSubRule
+			rawCfg.SubRules[payloadConnNonLocalFinalRuleName] = payloadConnNonLocalFinalSubRule
+		}
+
+		if isVisitor && !isCurrentPublisher {
+			rawCfg.Proxy = append(rawCfg.Proxy, visitorNotPublisherProxies...)
+			rawCfg.ProxyGroup = append(rawCfg.ProxyGroup, visitorNotPublisherProxyGroups...)
+
+			payloadConnNonLocalSubRule = append(payloadConnNonLocalSubRule, visitorNotPublisherPayloadConnHTTPRedirectRules...)
+			payloadConnNonLocalSubRule = append(payloadConnNonLocalSubRule, visitorNotPublisherPayloadConnSvcRules...)
+
+			addPayloadNonLocalRulesAction()
+
+			rawCfg.Rule = append([]string{"SUB-RULE,(NETWORK,tcp)," + payloadConnNonLocalRuleName}, rawCfg.Rule...)
+			maps.Copy(config.Clashray.ClashrayHTTPRedirectMap, visitorNotPublisherHTTPRedirectMap)
+			if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
+				rawCfg.Listeners = append(rawCfg.Listeners, visitorNotPublisherVisitorTunnelListeners...)
+				maps.Copy(rawCfg.Hosts, visitorNotPublisherHosts)
+			}
+		} else if isVisitor && isCurrentPublisher {
+			payloadConnNonLocalSubRule = append(payloadConnNonLocalSubRule, publisherAlsoVisitorPayloadConnHTTPRedirectRules...)
+			publisherAction()
+
+			addPayloadNonLocalRulesAction()
+			rawCfg.SubRules[payloadConnLocalOnlyRuleName] = payloadConnLocalOnlySubRule
+			rawCfg.SubRules[payloadConnLocalAndNonLocalFinalRuleName] = payloadConnLocalAndNonLocalFinalSubRule
+
+			rawCfg.Rule = append([]string{
+				"SUB-RULE,(NETWORK,tcp)," + payloadConnLocalOnlyRuleName,
+				"SUB-RULE,(NETWORK,tcp)," + payloadConnNonLocalRuleName,
+			}, rawCfg.Rule...)
+			maps.Copy(config.Clashray.ClashrayHTTPRedirectMap, publisherAlsoVisitorHTTPRedirectMap)
+			if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
+				rawCfg.Listeners = append(rawCfg.Listeners, publisherVisitorTunnelListeners...)
+				maps.Copy(rawCfg.Hosts, publisherAlsoVisitorHosts)
+			}
+		} else if !isVisitor && isCurrentPublisher {
+			publisherAction()
+			addPayloadNonLocalRulesAction()
+		} else if !isVisitor && !isCurrentPublisher {
+
+		}
+
 	}
 
 	if !publisherEverMatched && config.Clashray.ClashrayNetCurrAsPublisher != "" {
@@ -945,56 +1050,108 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	}
 
 	if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
-		httpRedirectListener := make(map[string]interface{})
-		rawCfg.Listeners = append(rawCfg.Listeners, httpRedirectListener)
-		httpRedirectListener["name"] = "clashray-http-redirect-listener"
-		httpRedirectListener["type"] = "tunnel"
-		httpRedirectListener["listen"] = "127.0.199.199"
-		httpRedirectListener["port"] = 80
-		httpRedirectListener["network"] = []string{"tcp"}
-		httpRedirectListener["target"] = "0.0.0.0" + ":" + "0"
-		httpRedirectListener["rule"] = "clashray-http-redirect-rule"
+		if config.Clashray.ClashrayNetHTTPRedirectLocalListenAddr != "dontListen" {
+			httpRedirectListener := make(map[string]interface{})
+			rawCfg.Listeners = append(rawCfg.Listeners, httpRedirectListener)
+			httpRedirectListener["name"] = "clashray-http-redirect-listener"
+			httpRedirectListener["type"] = "tunnel"
+			{
+				lAddr := "127.0.199.199"
+				if config.Clashray.ClashrayNetHTTPRedirectLocalListenAddr != "" {
+					lAddr = config.Clashray.ClashrayNetHTTPRedirectLocalListenAddr
+				}
+				httpRedirectListener["listen"] = lAddr
+			}
+			{
+				lPort := uint16(80)
+				if config.Clashray.ClashrayNetHTTPRedirectLocalListenPort != uint16(0) {
+					lPort = config.Clashray.ClashrayNetHTTPRedirectLocalListenPort
+				}
+				httpRedirectListener["port"] = lPort
+			}
 
-		clashrayTestListener := make(map[string]interface{})
-		rawCfg.Listeners = append(rawCfg.Listeners, clashrayTestListener)
-		clashrayTestListener["name"] = "clashray-test-listener"
-		clashrayTestListener["type"] = "tunnel"
-		clashrayTestListener["listen"] = "127.0.199.198"
-		clashrayTestListener["port"] = 80
-		clashrayTestListener["network"] = []string{"tcp"}
-		clashrayTestListener["target"] = "0.0.0.0" + ":" + "0"
-		clashrayTestListener["rule"] = "clashray-test-rule"
+			httpRedirectListener["network"] = []string{"tcp"}
+			httpRedirectListener["target"] = "0.0.0.0" + ":" + "0"
+			httpRedirectListener["rule"] = "clashray-http-redirect-rule"
 
-		rawCfg.SubRules["clashray-test-rule"] = []string{
-			"MATCH,INTERNAL-HTTP:::CLASHRAY-TEST",
-		}
-
-		rawCfg.Hosts["test.clashray.home.arpa"] = "127.0.199.198"
-
-		clashraySendListener := make(map[string]interface{})
-		rawCfg.Listeners = append(rawCfg.Listeners, clashraySendListener)
-		clashraySendListener["name"] = "clashray-send-listener"
-		clashraySendListener["type"] = "tunnel"
-		clashraySendListener["listen"] = "127.0.199.197"
-		clashraySendListener["port"] = 80
-		clashraySendListener["network"] = []string{"tcp"}
-		clashraySendListener["target"] = "0.0.0.0" + ":" + "0"
-		clashraySendListener["rule"] = "clashray-send-rule"
-
-		rawCfg.Hosts["send.clashray.home.arpa"] = "127.0.199.197"
-
-		for httpRedirectHost := range rawCfg.ClashrayHTTPRedirectMap {
-			rawCfg.Hosts[httpRedirectHost] = "127.0.199.199"
+			for httpRedirectHost := range rawCfg.ClashrayHTTPRedirectMap {
+				rawCfg.Hosts[httpRedirectHost] = httpRedirectListener["listen"]
+			}
 		}
 	}
-
-	rawCfg.Rule = append([]string{"DOMAIN-SUFFIX,test.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-TEST", "DOMAIN-SUFFIX,send.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-SEND"}, rawCfg.Rule...)
 	rawCfg.SubRules["clashray-http-redirect-rule"] = []string{
 		"MATCH,INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT",
+	}
+
+	/////////////
+
+	if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
+		if config.Clashray.ClashrayTestLocalListenAddr != "dontListen" {
+			clashrayTestListener := make(map[string]interface{})
+			rawCfg.Listeners = append(rawCfg.Listeners, clashrayTestListener)
+			clashrayTestListener["name"] = "clashray-test-listener"
+			clashrayTestListener["type"] = "tunnel"
+			{
+				lAddr := "127.0.199.198"
+				if config.Clashray.ClashrayTestLocalListenAddr != "" {
+					lAddr = config.Clashray.ClashrayTestLocalListenAddr
+				}
+				clashrayTestListener["listen"] = lAddr
+			}
+			{
+				lPort := uint16(80)
+				if config.Clashray.ClashrayTestLocalListenPort != uint16(0) {
+					lPort = config.Clashray.ClashrayTestLocalListenPort
+				}
+				clashrayTestListener["port"] = lPort
+			}
+
+			clashrayTestListener["network"] = []string{"tcp"}
+			clashrayTestListener["target"] = "0.0.0.0" + ":" + "0"
+			clashrayTestListener["rule"] = "clashray-test-rule"
+
+			rawCfg.Hosts["test.clashray.home.arpa"] = clashrayTestListener["listen"]
+		}
+	}
+	rawCfg.SubRules["clashray-test-rule"] = []string{
+		"MATCH,INTERNAL-HTTP:::CLASHRAY-TEST",
+	}
+
+	/////////////
+
+	if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
+		if config.Clashray.ClashraySendLocalListenAddr != "dontListen" {
+			clashraySendListener := make(map[string]interface{})
+			rawCfg.Listeners = append(rawCfg.Listeners, clashraySendListener)
+			clashraySendListener["name"] = "clashray-send-listener"
+			clashraySendListener["type"] = "tunnel"
+			{
+				lAddr := "127.0.199.197"
+				if config.Clashray.ClashraySendLocalListenAddr != "" {
+					lAddr = config.Clashray.ClashraySendLocalListenAddr
+				}
+				clashraySendListener["listen"] = lAddr
+			}
+			{
+				lPort := uint16(80)
+				if config.Clashray.ClashraySendLocalListenPort != uint16(0) {
+					lPort = config.Clashray.ClashraySendLocalListenPort
+				}
+				clashraySendListener["port"] = lPort
+			}
+
+			clashraySendListener["network"] = []string{"tcp"}
+			clashraySendListener["target"] = "0.0.0.0" + ":" + "0"
+			clashraySendListener["rule"] = "clashray-send-rule"
+
+			rawCfg.Hosts["send.clashray.home.arpa"] = clashraySendListener["listen"]
+		}
 	}
 	rawCfg.SubRules["clashray-send-rule"] = []string{
 		"MATCH,INTERNAL-HTTP:::CLASHRAY-SEND",
 	}
+
+	rawCfg.Rule = append([]string{"DOMAIN-SUFFIX,test.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-TEST", "DOMAIN-SUFFIX,send.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-SEND"}, rawCfg.Rule...)
 
 	////// shunf4 mod: clashray-net: end
 
