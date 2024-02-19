@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -644,11 +645,13 @@ type singleConnListener struct {
 	l    sync.Mutex
 }
 
+var singleConnListenerErrorNoNextConn = errors.New("no more new connections")
+
 func (l *singleConnListener) Accept() (net.Conn, error) {
 	l.l.Lock()
 	if l.done {
 		l.l.Unlock()
-		return nil, io.ErrClosedPipe
+		return nil, singleConnListenerErrorNoNextConn
 	}
 	defer l.l.Unlock()
 
@@ -671,7 +674,7 @@ func BgHandleInternalHTTPClashraySend() net.Conn {
 		err := http.Serve(&singleConnListener{
 			conn: conn2,
 		}, internalHTTPClashraySend)
-		if err != nil {
+		if err != nil && !errors.Is(err, singleConnListenerErrorNoNextConn) {
 			log.Warnln("internalHTTP: clashraySend: handling error: %v", err)
 		}
 	}()
@@ -686,7 +689,7 @@ func BgHandleInternalHTTPClashrayHTTPRedirect() net.Conn {
 		}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			internalHTTPClashrayHTTPRedirect.ServeHTTP(w, r)
 		}))
-		if err != nil {
+		if err != nil && !errors.Is(err, singleConnListenerErrorNoNextConn) {
 			log.Warnln("internalHTTP: clashrayRedirect: handling error: %v", err)
 		}
 	}()
@@ -702,7 +705,7 @@ func BgHandleInternalHTTPClashrayTest(metadata *C.Metadata) net.Conn {
 			r = r.WithContext(context.WithValue(r.Context(), "ClashrayTestVia", metadata.InName))
 			internalHTTPClashrayTest.ServeHTTP(w, r)
 		}))
-		if err != nil {
+		if err != nil && !errors.Is(err, singleConnListenerErrorNoNextConn) {
 			log.Warnln("internalHTTP: clashrayTest: handling error: %v", err)
 		}
 	}()

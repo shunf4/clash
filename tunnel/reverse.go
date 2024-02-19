@@ -207,12 +207,6 @@ func RestartReverse(cfgList []ReverseConf, stopAfterErrRetryCount int, seeAsErro
 				conn1, conn2 := net.Pipe()
 				lastStartTime = time.Now()
 
-				go func() {
-					log.Debugln("starts reverse bridge connection")
-					Tunnel.HandleTCPConn(conn2, metadata)
-					log.Debugln("ends reverse bridge connection")
-				}()
-
 				// conn1 is a V2Ray Mux Server Worker connection.
 				w := &MuxServerWorker{
 					fromBridgeWithRule: thisCfg.BridgeConnSubRule,
@@ -220,7 +214,11 @@ func RestartReverse(cfgList []ReverseConf, stopAfterErrRetryCount int, seeAsErro
 					PayloadConnSubRule: thisCfg.PayloadConnSubRule,
 				}
 
-				log.Debugln("reverse: new MuxServerWorker %p: reverseIdentDomain=%s, reverseIdentIP=%s, bridgeConnSubRule=%s, payloadConnSubRule=%s", w, reverseIdentDomain, reverseIdentIP.String(), thisCfg.BridgeConnSubRule, thisCfg.PayloadConnSubRule)
+				go func() {
+					log.Debugln("reverse: new MuxServerWorker %p: reverseIdentDomain=%s, reverseIdentIP=%s, bridgeConnSubRule=%s, payloadConnSubRule=%s: starts reverse bridge connection", w, reverseIdentDomain, reverseIdentIP.String(), thisCfg.BridgeConnSubRule, thisCfg.PayloadConnSubRule)
+					Tunnel.HandleTCPConn(conn2, metadata)
+					log.Debugln("reverse: new MuxServerWorker %p: reverseIdentDomain=%s, reverseIdentIP=%s, bridgeConnSubRule=%s, payloadConnSubRule=%s: ends reverse bridge connection", w, reverseIdentDomain, reverseIdentIP.String(), thisCfg.BridgeConnSubRule, thisCfg.PayloadConnSubRule)
+				}()
 
 				for {
 					select {

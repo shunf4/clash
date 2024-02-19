@@ -529,9 +529,10 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 		},
 		ExternalUIURL: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip",
 
-		ClashrayNetCurrAsPublisher:                  "",
-		ClashrayNetCurrIsAsVisitor:                  false,
-		ClashrayNetVisitorTunnelNoHostsNorListening: false,
+		ClashrayNetCurrAsPublisher: "",
+		ClashrayNetCurrIsAsVisitor: false,
+		// ClashrayNetVisitorTunnelNoHostsNorListening: false,
+		ClashrayNetVisitorTunnelNoHostsNorListening: true,
 	}
 
 	if err := yaml.Unmarshal(buf, rawCfg); err != nil {
