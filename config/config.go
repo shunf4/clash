@@ -752,7 +752,9 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 		visitorNotPublisherPayloadConnSvcRules := []string{}
 		publisherNonLocalPayloadConnSvcRules := []string{}
+		publisherNonLocalPayloadConnSvcRules_pre1 := []string{}
 		publisherLocalOnlyPayloadConnSvcRules := []string{}
+		publisherLocalOnlyPayloadConnSvcRules_pre1 := []string{}
 		visitorNotPublisherVisitorTunnelListeners := []map[string]interface{}{}
 		publisherVisitorTunnelListeners := []map[string]interface{}{}
 		visitorNotPublisherHosts := map[string]interface{}{}
@@ -947,6 +949,54 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 						publisherAlsoVisitorPayloadConnHTTPRedirectRules = append(publisherAlsoVisitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
 					}
 				}
+				if pm, ok := strings.CutPrefix(opt, "portmap="); ok {
+					pmParts := strings.Split(pm, "->")
+					for pmpi := range pmParts {
+						pmParts[pmpi] = strings.TrimSpace(pmParts[pmpi])
+					}
+					if len(pmParts) < 2 {
+						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad portmap option, len(pmParts) %d < 2", p.Name, si, len(pmParts))
+					}
+					pmFromPortStr := pmParts[0]
+					var pmFromPortRaw uint64
+					var pmFromPort uint16
+					if pmFromPortStr == "" {
+						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad portmap option, pmFromPortStr is empty", p.Name, si)
+					}
+					pmFromPortRaw, err = strconv.ParseUint(pmFromPortStr, 10, 16)
+					if err != nil {
+						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad portmap option, parsing pmFromPortStr %s: %v", p.Name, si, pmFromPortStr, err)
+					}
+					pmFromPort = uint16(pmFromPortRaw)
+					pmFromPortStr = strconv.FormatInt(int64(pmFromPort), 10)
+
+					pmToPortStr := pmParts[1]
+					var pmToPortRaw uint64
+					var pmToPort uint16
+					if pmToPortStr == "" {
+						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad portmap option, pmToPortStr is empty", p.Name, si)
+					}
+					pmToPortRaw, err = strconv.ParseUint(pmToPortStr, 10, 16)
+					if err != nil {
+						return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad portmap option, parsing pmToPortStr %s: %v", p.Name, si, pmToPortStr, err)
+					}
+					pmToPort = uint16(pmToPortRaw)
+					pmToPortStr = strconv.FormatInt(int64(pmToPort), 10)
+
+					if pmFromPort > 0 && pmToPort > 0 {
+						if isLocalOnly {
+							publisherLocalOnlyPayloadConnSvcRules_pre1 = append(
+								publisherLocalOnlyPayloadConnSvcRules_pre1,
+								fmt.Sprintf("AND,((%s,%s),(DST-PORT,%s)),%s", sMatchCond, sHost, pmFromPortStr, sRealDestProxy+":::"+sRealDestHost+":::"+pmToPortStr),
+							)
+						} else {
+							publisherNonLocalPayloadConnSvcRules_pre1 = append(
+								publisherNonLocalPayloadConnSvcRules_pre1,
+								fmt.Sprintf("AND,((%s,%s),(DST-PORT,%s)),%s", sMatchCond, sHost, pmFromPortStr, sRealDestProxy+":::"+sRealDestHost+":::"+pmToPortStr),
+							)
+						}
+					}
+				}
 			}
 		}
 
@@ -989,7 +1039,13 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			maps.Copy(rawCfg.SubRules, publisherBridgeConnRules)
 
 			payloadConnNonLocalSubRule = append(payloadConnNonLocalSubRule,
+				publisherNonLocalPayloadConnSvcRules_pre1...,
+			)
+			payloadConnNonLocalSubRule = append(payloadConnNonLocalSubRule,
 				publisherNonLocalPayloadConnSvcRules...,
+			)
+			payloadConnLocalOnlySubRule = append(payloadConnLocalOnlySubRule,
+				publisherLocalOnlyPayloadConnSvcRules_pre1...,
 			)
 			payloadConnLocalOnlySubRule = append(payloadConnLocalOnlySubRule,
 				publisherLocalOnlyPayloadConnSvcRules...,

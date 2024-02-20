@@ -369,13 +369,23 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 				internalHttpError(w, r, http.StatusBadRequest, "File is too big")
 				return
 			}
-			safeName, err := filenamify.Filenamify(fileHeader.Filename, filenamify.Options{
+			processedName1 := fileHeader.Filename
+			if processedName1 == "" {
+				processedName1 = "_"
+			}
+			safeName, err := filenamify.Filenamify(processedName1, filenamify.Options{
 				Replacement: "_",
 				MaxLength:   60,
 			})
 			if err != nil {
 				internalHttpError(w, r, http.StatusInternalServerError, "Error during filename process", err)
 				return
+			}
+			if safeName == "" {
+				safeName = "_"
+			}
+			if "."+safeName == processedName1 {
+				safeName = processedName1
 			}
 			if !filepath.IsLocal(safeName) {
 				safeName = filepath.Base(safeName) + "_"
