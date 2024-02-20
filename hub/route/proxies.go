@@ -109,7 +109,10 @@ func getProxyDelay(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	url := query.Get("url")
 	urlInConfig := executor.DelayTestUrl
-	if urlInConfig != "" {
+	// if urlInConfig != "" {
+	// 	url = urlInConfig
+	// }
+	if url == "" {
 		url = urlInConfig
 	}
 	if url == "" {
