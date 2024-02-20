@@ -611,14 +611,15 @@ func match(metadata *C.Metadata) (C.Proxy, C.Rule, error) {
 		attemptProcessLookup = true
 	)
 
-	if node, ok := resolver.DefaultHosts.Search(metadata.Host, false); ok {
-		metadata.DstIP, _ = node.RandIP()
-		resolved = true
-	}
-
 	for _, rule := range getRules(metadata) {
 		if !resolved && shouldResolveIP(rule, metadata) {
 			func() {
+				if node, ok := resolver.DefaultHosts.Search(metadata.Host, false); ok {
+					metadata.DstIP, _ = node.RandIP()
+					resolved = true
+					return
+				}
+
 				ctx, cancel := context.WithTimeout(context.Background(), resolver.DefaultDNSTimeout)
 				defer cancel()
 				ip, err := resolver.ResolveIP(ctx, metadata.Host)
