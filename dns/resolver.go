@@ -152,7 +152,7 @@ func (r *Resolver) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, e
 	q := m.Question[0]
 	cacheM, expireTime, hit := r.cache.GetWithExpire(q.String())
 	if hit {
-		log.Debugln("[DNS] cache hit for %s, expire at %s", q.Name, expireTime.Format("2006-01-02 15:04:05"))
+		// log.Debugln("[DNS] cache hit for %s, expire at %s", q.Name, expireTime.Format("2006-01-02 15:04:05"))
 		now := time.Now()
 		msg = cacheM.Copy()
 		if expireTime.Before(now) {
