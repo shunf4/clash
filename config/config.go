@@ -359,19 +359,22 @@ type RawConfig struct {
 
 	ClashForAndroid RawClashForAndroid `yaml:"clash-for-android" json:"clash-for-android"`
 
-	ClashrayNetCurrAsPublisher                  string                   `yaml:"clashray-net-curr-as-publisher"`
-	ClashrayNetCurrIsAsVisitor                  bool                     `yaml:"clashray-net-curr-is-as-visitor"`
-	ClashrayNetVisitorTunnelNoHostsNorListening bool                     `yaml:"clashray-net-visitor-tunnel-no-hosts-nor-listening"`
-	ClashrayNetHTTPRedirectLocalListenAddr      string                   `yaml:"clashray-net-http-redirect-local-listen-addr"`
-	ClashrayNetHTTPRedirectLocalListenPort      uint16                   `yaml:"clashray-net-http-redirect-local-listen-port-yes-i-dont-want-80"`
-	ClashrayTestLocalListenAddr                 string                   `yaml:"clashray-test-local-listen-addr"`
-	ClashrayTestLocalListenPort                 uint16                   `yaml:"clashray-test-local-listen-port-yes-i-dont-want-80"`
-	ClashraySendLocalListenAddr                 string                   `yaml:"clashray-send-local-listen-addr"`
-	ClashraySendLocalListenPort                 uint16                   `yaml:"clashray-send-local-listen-port-yes-i-dont-want-80"`
-	ClashraySendDir                             string                   `yaml:"clashray-send-dir"`
-	ClashraySendHistoryMaxSize                  uint32                   `yaml:"clashray-send-history-max-size"`
-	ClashrayNetPublishers                       []T.ClashrayNetPublisher `yaml:"clashray-net-publishers"`
-	ClashrayHTTPRedirectMap                     map[string]string        `yaml:"clashray-http-redirect-map"`
+	ClashrayNetCurrAsPublisher                  string                     `yaml:"clashray-net-curr-as-publisher"`
+	ClashrayNetCurrIsAsVisitor                  bool                       `yaml:"clashray-net-curr-is-as-visitor"`
+	ClashrayNetVisitorTunnelNoHostsNorListening bool                       `yaml:"clashray-net-visitor-tunnel-no-hosts-nor-listening"`
+	ClashrayNetHTTPRedirectLocalListenAddr      string                     `yaml:"clashray-net-http-redirect-local-listen-addr"`
+	ClashrayNetHTTPRedirectLocalListenPort      uint16                     `yaml:"clashray-net-http-redirect-local-listen-port-yes-i-dont-want-80"`
+	ClashrayTestLocalListenAddr                 string                     `yaml:"clashray-test-local-listen-addr"`
+	ClashrayTestLocalListenPort                 uint16                     `yaml:"clashray-test-local-listen-port-yes-i-dont-want-80"`
+	ClashraySendLocalListenAddr                 string                     `yaml:"clashray-send-local-listen-addr"`
+	ClashraySendLocalListenPort                 uint16                     `yaml:"clashray-send-local-listen-port-yes-i-dont-want-80"`
+	ClashraySendDir                             string                     `yaml:"clashray-send-dir"`
+	ClashraySendHistoryMaxSize                  uint32                     `yaml:"clashray-send-history-max-size"`
+	ClashrayNetPublishers                       []T.ClashrayNetPublisher   `yaml:"clashray-net-publishers"`
+	ClashrayHTTPRedirectMap                     map[string]string          `yaml:"clashray-http-redirect-map"`
+	ClashrayCurrPublisherAppendServices         []string                   `yaml:"clashray-curr-publisher-append-services"`
+	ClashrayCurrPublisherAppendLanContacts      []map[string]interface{}   `yaml:"clashray-curr-publisher-append-lan-contacts"`
+	ClashrayCurrPublisherAppendReverseContacts  []T.ClashrayReverseContact `yaml:"clashray-curr-publisher-append-reverse-contacts"`
 }
 
 type GeoXUrl struct {
@@ -606,6 +609,18 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s): ContactProxyGroupFallbackInterval is invalid (%d)", p.Name, p.ContactProxyGroupFallbackInterval)
 		}
 
+		{
+			isCurrentPublisher := false
+			if config.Clashray.ClashrayNetCurrAsPublisher == p.Name {
+				isCurrentPublisher = true
+			}
+			if isCurrentPublisher {
+				p.LanContacts = append(p.LanContacts, rawCfg.ClashrayCurrPublisherAppendLanContacts...)
+				p.ReverseContacts = append(p.ReverseContacts, rawCfg.ClashrayCurrPublisherAppendReverseContacts...)
+				p.Services = append(p.Services, rawCfg.ClashrayCurrPublisherAppendServices...)
+			}
+		}
+
 		currContactProxyGroupName := "clashray-net-" + p.Name + "-contact"
 		payloadConnNonLocalRuleName := "clashray-net-" + p.Name + "-payload-conn-non-local-rule"
 		payloadConnNonLocalFinalRuleName := "clashray-net-" + p.Name + "-payload-conn-non-local-rule-final"
@@ -762,14 +777,15 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 		for si := range p.Services {
 			s := p.Services[si]
+			var err error
 			isLocalOnly := false
 			s, isLocalOnly = strings.CutPrefix(s, "LOCAL-ONLY,")
 			sParts := strings.Split(s, ",")
 			for spi := range sParts {
 				sParts[spi] = strings.TrimSpace(sParts[spi])
 			}
-			if len(sParts) < 4 {
-				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services: bad service line, len(sParts) %d less than 4", p.Name, len(sParts))
+			if len(sParts) < 3 {
+				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services: bad service line, len(sParts) %d less than 3", p.Name, len(sParts))
 			}
 			sMatchCond := sParts[0]
 			sHost := strings.TrimPrefix(sParts[1], ".")
@@ -788,24 +804,39 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			if sRealDestProxy == "" {
 				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad service line, sRealDestProxy is empty", p.Name, si)
 			}
-			sRealDestAddr := sParts[3]
-			if sRealDestAddr == "" {
-				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad service line, sRealDestAddr is empty", p.Name, si)
+			if sRealDestProxy != "BLANKET-FORWARD" && len(sParts) < 4 {
+				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services: bad service line, len(sParts) %d less than 4", p.Name, len(sParts))
 			}
-
-			sRealDestHost, sRealDestPort, err := net.SplitHostPort(sRealDestAddr)
-			if err != nil {
-				sRealDestHost = sRealDestAddr
-				sRealDestPort = ""
+			var sRealDestHost string
+			var sRealDestPort string
+			if sRealDestProxy == "BLANKET-FORWARD" {
+				sRealDestHost = "BLANKET-FORWARD"
+				sRealDestPort = "BLANKET-FORWARD"
+				if isLocalOnly {
+					return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services: bad service line, conflicts: LOCAL-ONLY and BLANKET-FORWARD", p.Name)
+				} else {
+					visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, currContactProxyGroupName))
+				}
 			} else {
-				sRealDestPort = ":::" + sRealDestPort
-			}
+				sRealDestAddr := sParts[3]
+				if sRealDestAddr == "" {
+					return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services[%d]: bad service line, sRealDestAddr is empty", p.Name, si)
+				}
 
-			if isLocalOnly {
-				publisherLocalOnlyPayloadConnSvcRules = append(publisherLocalOnlyPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort))
-			} else {
-				visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, currContactProxyGroupName))
-				publisherNonLocalPayloadConnSvcRules = append(publisherNonLocalPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort))
+				sRealDestHost, sRealDestPort, err = net.SplitHostPort(sRealDestAddr)
+				if err != nil {
+					sRealDestHost = sRealDestAddr
+					sRealDestPort = ""
+				} else {
+					sRealDestPort = ":::" + sRealDestPort
+				}
+
+				if isLocalOnly {
+					publisherLocalOnlyPayloadConnSvcRules = append(publisherLocalOnlyPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort))
+				} else {
+					visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, currContactProxyGroupName))
+					publisherNonLocalPayloadConnSvcRules = append(publisherNonLocalPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort))
+				}
 			}
 
 			visitorNotPublisherVisitorTunnelDedup := map[string]bool{}
@@ -893,16 +924,18 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 								"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+currContactProxyGroupName+":::"+sHost,
 							)
 						}
-						if !isLocalOnly {
-							publisherNonLocalPayloadConnSvcRules = append(
-								publisherNonLocalPayloadConnSvcRules,
-								"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
-							)
-						} else {
-							publisherLocalOnlyPayloadConnSvcRules = append(
-								publisherLocalOnlyPayloadConnSvcRules,
-								"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
-							)
+						if sRealDestHost != "BLANKET-FORWARD" {
+							if !isLocalOnly {
+								publisherNonLocalPayloadConnSvcRules = append(
+									publisherNonLocalPayloadConnSvcRules,
+									"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
+								)
+							} else {
+								publisherLocalOnlyPayloadConnSvcRules = append(
+									publisherLocalOnlyPayloadConnSvcRules,
+									"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
+								)
+							}
 						}
 					} else {
 						if !isLocalOnly {
@@ -911,16 +944,18 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 								"IP-CIDR,"+vtListenHost+"/32,"+currContactProxyGroupName+":::"+sHost+",no-resolve",
 							)
 						}
-						if !isLocalOnly {
-							publisherNonLocalPayloadConnSvcRules = append(
-								publisherNonLocalPayloadConnSvcRules,
-								"IP-CIDR,"+vtListenHost+"/32,"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort+",no-resolve",
-							)
-						} else {
-							publisherLocalOnlyPayloadConnSvcRules = append(
-								publisherLocalOnlyPayloadConnSvcRules,
-								"IP-CIDR,"+vtListenHost+"/32,"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort+",no-resolve",
-							)
+						if sRealDestHost != "BLANKET-FORWARD" {
+							if !isLocalOnly {
+								publisherNonLocalPayloadConnSvcRules = append(
+									publisherNonLocalPayloadConnSvcRules,
+									"IP-CIDR,"+vtListenHost+"/32,"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort+",no-resolve",
+								)
+							} else {
+								publisherLocalOnlyPayloadConnSvcRules = append(
+									publisherLocalOnlyPayloadConnSvcRules,
+									"IP-CIDR,"+vtListenHost+"/32,"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort+",no-resolve",
+								)
+							}
 						}
 					}
 
@@ -984,16 +1019,18 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 					pmToPortStr = strconv.FormatInt(int64(pmToPort), 10)
 
 					if pmFromPort > 0 && pmToPort > 0 {
-						if isLocalOnly {
-							publisherLocalOnlyPayloadConnSvcRules_pre1 = append(
-								publisherLocalOnlyPayloadConnSvcRules_pre1,
-								fmt.Sprintf("AND,((%s,%s),(DST-PORT,%s)),%s", sMatchCond, sHost, pmFromPortStr, sRealDestProxy+":::"+sRealDestHost+":::"+pmToPortStr),
-							)
-						} else {
-							publisherNonLocalPayloadConnSvcRules_pre1 = append(
-								publisherNonLocalPayloadConnSvcRules_pre1,
-								fmt.Sprintf("AND,((%s,%s),(DST-PORT,%s)),%s", sMatchCond, sHost, pmFromPortStr, sRealDestProxy+":::"+sRealDestHost+":::"+pmToPortStr),
-							)
+						if sRealDestHost != "BLANKET-FORWARD" {
+							if isLocalOnly {
+								publisherLocalOnlyPayloadConnSvcRules_pre1 = append(
+									publisherLocalOnlyPayloadConnSvcRules_pre1,
+									fmt.Sprintf("AND,((%s,%s),(DST-PORT,%s)),%s", sMatchCond, sHost, pmFromPortStr, sRealDestProxy+":::"+sRealDestHost+":::"+pmToPortStr),
+								)
+							} else {
+								publisherNonLocalPayloadConnSvcRules_pre1 = append(
+									publisherNonLocalPayloadConnSvcRules_pre1,
+									fmt.Sprintf("AND,((%s,%s),(DST-PORT,%s)),%s", sMatchCond, sHost, pmFromPortStr, sRealDestProxy+":::"+sRealDestHost+":::"+pmToPortStr),
+								)
+							}
 						}
 					}
 				}
