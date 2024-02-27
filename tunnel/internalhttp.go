@@ -164,6 +164,14 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 		clashrayConfig.ClashraySendHistoryMaxSize = math.MaxInt32 - 1
 	}
 
+	corsAllowedOrigins := []string{}
+	if clashrayConfig.ClashraySendCORSAllowedOrigins != nil {
+		for _, o := range clashrayConfig.ClashraySendCORSAllowedOrigins {
+			corsAllowedOrigins = append(corsAllowedOrigins, "http://"+o)
+			corsAllowedOrigins = append(corsAllowedOrigins, "https://"+o)
+		}
+	}
+
 	if clashrayConfig.ClashraySendDir != "" {
 		os.MkdirAll(clashrayConfig.ClashraySendDir, os.FileMode(0o750))
 
@@ -606,8 +614,9 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 	internalHTTPClashrayTest = chi.NewRouter()
 	internalHTTPClashrayTest.Use(middleware.Logger)
 	internalHTTPClashrayTest.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{"https://*", "http://*"},
-		// AllowOriginFunc:  func(r *http.Request, origin string) bool { return true },
+		// AllowedOrigins: []string{"https://*", "http://*"},
+		AllowedOrigins: corsAllowedOrigins,
+		// AllowOriginFunc:  func(r *http.Request, origin string) bool { return corsAllowedOrigins[origin] },
 		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
 		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "Authorization"},
 		MaxAge:         300,
