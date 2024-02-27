@@ -372,7 +372,7 @@ type RawConfig struct {
 	ClashraySendHistoryMaxSize                  uint32                     `yaml:"clashray-send-history-max-size"`
 	ClashrayNetPublishers                       []T.ClashrayNetPublisher   `yaml:"clashray-net-publishers"`
 	ClashrayHTTPRedirectMap                     map[string]string          `yaml:"clashray-http-redirect-map"`
-	ClashraySendCORSAllowedOrigins              []string                   `yaml:"clashray-send-cors-allowed-origins"`
+	ClashrayTestCORSAllowedOrigins              []string                   `yaml:"clashray-test-cors-allowed-origins"`
 	ClashrayCurrPublisherAppendServices         []string                   `yaml:"clashray-curr-publisher-append-services"`
 	ClashrayCurrPublisherAppendLanContacts      []map[string]interface{}   `yaml:"clashray-curr-publisher-append-lan-contacts"`
 	ClashrayCurrPublisherAppendReverseContacts  []T.ClashrayReverseContact `yaml:"clashray-curr-publisher-append-reverse-contacts"`
@@ -563,7 +563,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	config.Clashray.ClashraySendLocalListenAddr = rawCfg.ClashraySendLocalListenAddr
 	config.Clashray.ClashraySendLocalListenPort = rawCfg.ClashraySendLocalListenPort
 	config.Clashray.ClashrayHTTPRedirectMap = rawCfg.ClashrayHTTPRedirectMap
-	config.Clashray.ClashraySendCORSAllowedOrigins = rawCfg.ClashraySendCORSAllowedOrigins
+	config.Clashray.ClashrayTestCORSAllowedOrigins = rawCfg.ClashrayTestCORSAllowedOrigins
 	config.Clashray.ClashraySendDir = rawCfg.ClashraySendDir
 	config.Clashray.ClashraySendHistoryMaxSize = rawCfg.ClashraySendHistoryMaxSize
 	config.Clashray.ClashrayNetPublishers = rawCfg.ClashrayNetPublishers
@@ -594,8 +594,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	if config.Clashray.ClashrayHTTPRedirectMap == nil {
 		config.Clashray.ClashrayHTTPRedirectMap = make(map[string]string)
 	}
-	if config.Clashray.ClashraySendCORSAllowedOrigins == nil {
-		config.Clashray.ClashraySendCORSAllowedOrigins = make([]string, 0)
+	if config.Clashray.ClashrayTestCORSAllowedOrigins == nil {
+		config.Clashray.ClashrayTestCORSAllowedOrigins = make([]string, 0)
 	}
 
 	publisherEverMatched := false
@@ -1111,8 +1111,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 			rawCfg.Listeners = append(rawCfg.Listeners, publisherLanContactListeners...)
 			rawCfg.Reverses = append(rawCfg.Reverses, publisherReverses...)
-			rawCfg.ClashraySendCORSAllowedOrigins = append(rawCfg.ClashraySendCORSAllowedOrigins, publisherCORSAllowed...)
-			config.Clashray.ClashraySendCORSAllowedOrigins = append(config.Clashray.ClashraySendCORSAllowedOrigins, publisherCORSAllowed...)
+			rawCfg.ClashrayTestCORSAllowedOrigins = append(rawCfg.ClashrayTestCORSAllowedOrigins, publisherCORSAllowed...)
+			config.Clashray.ClashrayTestCORSAllowedOrigins = append(config.Clashray.ClashrayTestCORSAllowedOrigins, publisherCORSAllowed...)
 		}
 
 		// if isVisitor || isCurrentPublisher {
@@ -1137,8 +1137,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 				maps.Copy(rawCfg.Hosts, visitorNotPublisherHosts)
 			}
 
-			rawCfg.ClashraySendCORSAllowedOrigins = append(rawCfg.ClashraySendCORSAllowedOrigins, visitorNotPublisherCORSAllowed...)
-			config.Clashray.ClashraySendCORSAllowedOrigins = append(config.Clashray.ClashraySendCORSAllowedOrigins, visitorNotPublisherCORSAllowed...)
+			rawCfg.ClashrayTestCORSAllowedOrigins = append(rawCfg.ClashrayTestCORSAllowedOrigins, visitorNotPublisherCORSAllowed...)
+			config.Clashray.ClashrayTestCORSAllowedOrigins = append(config.Clashray.ClashrayTestCORSAllowedOrigins, visitorNotPublisherCORSAllowed...)
 		} else if isVisitor && isCurrentPublisher {
 			payloadConnNonLocalSubRule = append(payloadConnNonLocalSubRule, publisherAlsoVisitorPayloadConnHTTPRedirectRules...)
 			publisherAction()
@@ -1272,10 +1272,10 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	}
 
 	rawCfg.Rule = append([]string{"DOMAIN-SUFFIX,test.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-TEST", "DOMAIN-SUFFIX,send.clashray.home.arpa,INTERNAL-HTTP:::CLASHRAY-SEND"}, rawCfg.Rule...)
-	rawCfg.ClashraySendCORSAllowedOrigins = append(rawCfg.ClashraySendCORSAllowedOrigins, "test.clashray.home.arpa")
-	config.Clashray.ClashraySendCORSAllowedOrigins = append(config.Clashray.ClashraySendCORSAllowedOrigins, "test.clashray.home.arpa")
-	rawCfg.ClashraySendCORSAllowedOrigins = append(rawCfg.ClashraySendCORSAllowedOrigins, "send.clashray.home.arpa")
-	config.Clashray.ClashraySendCORSAllowedOrigins = append(config.Clashray.ClashraySendCORSAllowedOrigins, "send.clashray.home.arpa")
+	rawCfg.ClashrayTestCORSAllowedOrigins = append(rawCfg.ClashrayTestCORSAllowedOrigins, "test.clashray.home.arpa")
+	config.Clashray.ClashrayTestCORSAllowedOrigins = append(config.Clashray.ClashrayTestCORSAllowedOrigins, "test.clashray.home.arpa")
+	rawCfg.ClashrayTestCORSAllowedOrigins = append(rawCfg.ClashrayTestCORSAllowedOrigins, "send.clashray.home.arpa")
+	config.Clashray.ClashrayTestCORSAllowedOrigins = append(config.Clashray.ClashrayTestCORSAllowedOrigins, "send.clashray.home.arpa")
 
 	////// shunf4 mod: clashray-net: end
 

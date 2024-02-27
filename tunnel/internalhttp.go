@@ -165,10 +165,14 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 	}
 
 	corsAllowedOrigins := []string{}
-	if clashrayConfig.ClashraySendCORSAllowedOrigins != nil {
-		for _, o := range clashrayConfig.ClashraySendCORSAllowedOrigins {
-			corsAllowedOrigins = append(corsAllowedOrigins, "http://"+o)
-			corsAllowedOrigins = append(corsAllowedOrigins, "https://"+o)
+	if clashrayConfig.ClashrayTestCORSAllowedOrigins != nil {
+		for _, o := range clashrayConfig.ClashrayTestCORSAllowedOrigins {
+			if strings.HasPrefix(o, "http://") || strings.HasPrefix(o, "https://") {
+				corsAllowedOrigins = append(corsAllowedOrigins, o)
+			} else {
+				corsAllowedOrigins = append(corsAllowedOrigins, "http://"+o)
+				corsAllowedOrigins = append(corsAllowedOrigins, "https://"+o)
+			}
 		}
 	}
 

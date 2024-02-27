@@ -61,7 +61,7 @@ type Clashray struct {
 	ClashrayNetPublishers                       []ClashrayNetPublisher `yaml:"clashray-net-publishers"`
 	ClashrayNetPublishersMap                    map[string]*ClashrayNetPublisher
 	ClashrayHTTPRedirectMap                     map[string]string
-	ClashraySendCORSAllowedOrigins              []string
+	ClashrayTestCORSAllowedOrigins              []string
 
 	ClashrayNetHTTPRedirectLocalListenAddr string `yaml:"clashray-net-http-redirect-local-listen-addr"`
 	ClashrayNetHTTPRedirectLocalListenPort uint16 `yaml:"clashray-net-http-redirect-local-listen-port-yes-i-dont-want-80"`
