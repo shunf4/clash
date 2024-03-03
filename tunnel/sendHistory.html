@@ -50,7 +50,7 @@
   <span style="float:right">{{ .Timestamp }}</span>
   <p><pre class="send-summary">{{ .Summary }}</pre></p>
   {{ if isPicture $h }}
-  <a target="_blank" href="/file/{{ URLEncode .FileName }}"><img src="/file/{{ URLEncode .FileName }}" style="max-width: 10em; max-height: 10em;" /></a>
+  <a target="_blank" href="/file/{{ URLEncode .FileName }}"><img loading="lazy" src="/file/{{ URLEncode .FileName }}" style="max-width: 10em; max-height: 10em;" /></a>
   {{ end }}
   <p><a target="_blank" href="/file/{{ URLEncode .FileName }}">Go ({{ ByteCountIEC .FileSize }})</a>{{ if eq .SendType "text" }}&emsp;&emsp;<a href="javascript:void(0)" class="copy-link" data-file-link="/file/{{ URLEncode .FileName }}">Copy</a>&emsp;<span></span>{{ end }}</p>
   </div>
