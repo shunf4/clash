@@ -997,11 +997,11 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 						}
 
 						if !isLocalOnly {
-							visitorNotPublisherHTTPRedirectMap[httpRedirectHost] = httpRedirectTarget
+							visitorNotPublisherHTTPRedirectMap[httpRedirectHost] = "auto-added:" + httpRedirectTarget
 							visitorNotPublisherPayloadConnHTTPRedirectRules = append(visitorNotPublisherPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
 						}
 
-						publisherAlsoVisitorHTTPRedirectMap[httpRedirectHost] = httpRedirectTarget
+						publisherAlsoVisitorHTTPRedirectMap[httpRedirectHost] = "auto-added:" + httpRedirectTarget
 						publisherAlsoVisitorPayloadConnHTTPRedirectRules = append(publisherAlsoVisitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
 					}
 				}
@@ -1194,13 +1194,27 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			httpRedirectListener["target"] = "0.0.0.0" + ":" + "0"
 			httpRedirectListener["rule"] = "clashray-http-redirect-rule"
 
-			for httpRedirectHost := range rawCfg.ClashrayHTTPRedirectMap {
+			for httpRedirectHost, v := range config.Clashray.ClashrayHTTPRedirectMap {
+				if strings.HasPrefix(v, "no-hosts:") || strings.HasPrefix(v, "no-hosts-nor-rule:") {
+					continue
+				}
 				rawCfg.Hosts[httpRedirectHost] = httpRedirectListener["listen"]
 			}
 		}
 	}
 	rawCfg.SubRules["clashray-http-redirect-rule"] = []string{
 		"MATCH,INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT",
+	}
+
+	manuallyAddedHTTPRedirectRules := []string{}
+	for httpRedirectHost, v := range config.Clashray.ClashrayHTTPRedirectMap {
+		if strings.HasPrefix(v, "no-rule:") || strings.HasPrefix(v, "no-hosts-nor-rule:") || strings.HasPrefix(v, "auto-added:") {
+			continue
+		}
+		manuallyAddedHTTPRedirectRules = append(manuallyAddedHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
+	}
+	if len(manuallyAddedHTTPRedirectRules) > 0 {
+		rawCfg.Rule = append(manuallyAddedHTTPRedirectRules, rawCfg.Rule...)
 	}
 
 	/////////////

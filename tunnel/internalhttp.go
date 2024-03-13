@@ -605,6 +605,10 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 			internalHttpError(w, r, http.StatusInternalServerError, "Redirect URL not found")
 			return
 		}
+		targetHost = strings.TrimPrefix(targetHost, "no-hosts:")
+		targetHost = strings.TrimPrefix(targetHost, "no-hosts-nor-rule:")
+		targetHost = strings.TrimPrefix(targetHost, "auto-added:")
+		targetHost = strings.TrimPrefix(targetHost, "no-rule:")
 		targetURL := targetHost
 		hasHttps := strings.HasPrefix(targetHost, "https://") || strings.HasPrefix(targetHost, "ftp://")
 		if !hasHttps {
