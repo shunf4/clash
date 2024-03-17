@@ -157,6 +157,7 @@ type IPTables struct {
 	Enable           bool     `yaml:"enable" json:"enable"`
 	InboundInterface string   `yaml:"inbound-interface" json:"inbound-interface"`
 	Bypass           []string `yaml:"bypass" json:"bypass"`
+	DnsRedirect      bool     `yaml:"dns-redirect" json:"dns-redirect"`
 }
 
 type Sniffer struct {
@@ -173,6 +174,7 @@ type Experimental struct {
 	Fingerprints     []string `yaml:"fingerprints"`
 	QUICGoDisableGSO bool     `yaml:"quic-go-disable-gso"`
 	QUICGoDisableECN bool     `yaml:"quic-go-disable-ecn"`
+	IP4PEnable       bool     `yaml:"dialer-ip4p-convert"`
 }
 
 // Config is mihomo config manager
@@ -381,6 +383,7 @@ type RawConfig struct {
 type GeoXUrl struct {
 	GeoIp   string `yaml:"geoip" json:"geoip"`
 	Mmdb    string `yaml:"mmdb" json:"mmdb"`
+	ASN     string `yaml:"asn" json:"asn"`
 	GeoSite string `yaml:"geosite" json:"geosite"`
 }
 
@@ -476,6 +479,7 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 			Enable:           false,
 			InboundInterface: "lo",
 			Bypass:           []string{},
+			DnsRedirect:      true,
 		},
 		NTP: RawNTP{
 			Enable:        false,
@@ -528,6 +532,7 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 		},
 		GeoXUrl: GeoXUrl{
 			Mmdb:    "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb",
+			ASN:     "https://github.com/xishang0128/geoip/releases/download/latest/GeoLite2-ASN.mmdb",
 			GeoIp:   "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat",
 			GeoSite: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat",
 		},
@@ -1417,6 +1422,9 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 }
 
 func parseGeneral(cfg *RawConfig) (*General, error) {
+	geodata.SetGeodataMode(cfg.GeodataMode)
+	geodata.SetGeoAutoUpdate(cfg.GeoAutoUpdate)
+	geodata.SetGeoUpdateInterval(cfg.GeoUpdateInterval)
 	geodata.SetLoader(cfg.GeodataLoader)
 	geodata.SetSiteMatcher(cfg.GeositeMatcher)
 	C.GeoAutoUpdate = cfg.GeoAutoUpdate
@@ -1424,6 +1432,7 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 	C.GeoIpUrl = cfg.GeoXUrl.GeoIp
 	C.GeoSiteUrl = cfg.GeoXUrl.GeoSite
 	C.MmdbUrl = cfg.GeoXUrl.Mmdb
+	C.ASNUrl = cfg.GeoXUrl.ASN
 	C.GeodataMode = cfg.GeodataMode
 	C.UA = cfg.GlobalUA
 	if cfg.KeepAliveInterval != 0 {

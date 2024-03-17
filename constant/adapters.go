@@ -21,6 +21,7 @@ const (
 	RejectDrop
 	Compatible
 	Pass
+	Dns
 
 	Relay
 	Selector
@@ -42,6 +43,7 @@ const (
 	Tuic
 
 	InternalHTTP
+	Ssh
 )
 
 const (
@@ -186,6 +188,8 @@ func (at AdapterType) String() string {
 		return "Compatible"
 	case Pass:
 		return "Pass"
+	case Dns:
+		return "Dns"
 	case Shadowsocks:
 		return "Shadowsocks"
 	case ShadowsocksR:
@@ -221,7 +225,8 @@ func (at AdapterType) String() string {
 		return "URLTest"
 	case LoadBalance:
 		return "LoadBalance"
-
+	case Ssh:
+		return "Ssh"
 	default:
 		return "Unknown"
 	}

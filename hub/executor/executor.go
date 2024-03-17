@@ -149,15 +149,18 @@ func GetGeneral() *config.General {
 			AllowLan:          listener.AllowLan(),
 			BindAddress:       listener.BindAddress(),
 		},
-		Controller:     config.Controller{},
-		Mode:           tunnel.Mode(),
-		LogLevel:       log.Level(),
-		IPv6:           !resolver.DisableIPv6,
-		GeodataLoader:  G.LoaderName(),
-		GeositeMatcher: G.SiteMatcherName(),
-		Interface:      dialer.DefaultInterface.Load(),
-		Sniffing:       tunnel.IsSniffing(),
-		TCPConcurrent:  dialer.GetTcpConcurrent(),
+		Controller:        config.Controller{},
+		Mode:              tunnel.Mode(),
+		LogLevel:          log.Level(),
+		IPv6:              !resolver.DisableIPv6,
+		GeodataMode:       G.GeodataMode(),
+		GeoAutoUpdate:     G.GeoAutoUpdate(),
+		GeoUpdateInterval: G.GeoUpdateInterval(),
+		GeodataLoader:     G.LoaderName(),
+		GeositeMatcher:    G.SiteMatcherName(),
+		Interface:         dialer.DefaultInterface.Load(),
+		Sniffing:          tunnel.IsSniffing(),
+		TCPConcurrent:     dialer.GetTcpConcurrent(),
 	}
 
 	return general
@@ -197,6 +200,7 @@ func updateExperimental(c *config.Config) {
 	if c.Experimental.QUICGoDisableECN {
 		_ = os.Setenv("QUIC_GO_DISABLE_ECN", strconv.FormatBool(true))
 	}
+	dialer.GetIP4PEnable(c.Experimental.IP4PEnable)
 }
 
 func updateNTP(c *config.NTP) {
@@ -484,6 +488,9 @@ func updateIPTables(cfg *config.Config) {
 		bypass           = iptables.Bypass
 		tProxyPort       = cfg.General.TProxyPort
 		dnsCfg           = cfg.DNS
+		DnsRedirect      = iptables.DnsRedirect
+
+		dnsPort netip.AddrPort
 	)
 
 	if tProxyPort == 0 {
@@ -491,15 +498,17 @@ func updateIPTables(cfg *config.Config) {
 		return
 	}
 
-	if !dnsCfg.Enable {
-		err = fmt.Errorf("DNS server must be enable")
-		return
-	}
+	if DnsRedirect {
+		if !dnsCfg.Enable {
+			err = fmt.Errorf("DNS server must be enable")
+			return
+		}
 
-	dnsPort, err := netip.ParseAddrPort(dnsCfg.Listen)
-	if err != nil {
-		err = fmt.Errorf("DNS server must be correct")
-		return
+		dnsPort, err = netip.ParseAddrPort(dnsCfg.Listen)
+		if err != nil {
+			err = fmt.Errorf("DNS server must be correct")
+			return
+		}
 	}
 
 	if iptables.InboundInterface != "" {
@@ -510,7 +519,7 @@ func updateIPTables(cfg *config.Config) {
 		dialer.DefaultRoutingMark.Store(2158)
 	}
 
-	err = tproxy.SetTProxyIPTables(inboundInterface, bypass, uint16(tProxyPort), dnsPort.Port())
+	err = tproxy.SetTProxyIPTables(inboundInterface, bypass, uint16(tProxyPort), DnsRedirect, dnsPort.Port())
 	if err != nil {
 		return
 	}
