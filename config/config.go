@@ -43,6 +43,7 @@ import (
 	R "github.com/metacubex/mihomo/rules"
 	RP "github.com/metacubex/mihomo/rules/provider"
 	T "github.com/metacubex/mihomo/tunnel"
+	"github.com/samber/lo"
 
 	orderedmap "github.com/wk8/go-ordered-map/v2"
 	"gopkg.in/yaml.v3"
@@ -197,6 +198,7 @@ type Config struct {
 	ReverseSeeAsErrorIfDisconnectInMillisec int
 	ReverseStopAfterErrorRetryCount         int
 	ReverseEnableOnAndroidTypeTransports    []int
+	ListenerFilterExcludePorts              []int
 	T.Clashray
 	Sniffer *Sniffer
 	TLS     *TLS
@@ -356,6 +358,7 @@ type RawConfig struct {
 	ReverseStopAfterErrorRetryCount         int   `yaml:"reverse-stop-after-error-retry-count"`
 	ReverseSeeAsErrorIfDisconnectInMillisec int   `yaml:"reverse-see-as-error-if-disconnect-in-millisec"`
 	ReverseEnableOnAndroidTypeTransports    []int `yaml:"reverse-enable-on-android-type-transports"`
+	ListenerFilterExcludePorts              []int `yaml:"listener-filter-exclude-ports"`
 
 	ClashForAndroid RawClashForAndroid `yaml:"clash-for-android" json:"clash-for-android"`
 
@@ -1316,7 +1319,11 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	config.Proxies = proxies
 	config.Providers = providers
 
-	listener, err := parseListeners(rawCfg)
+	config.ListenerFilterExcludePorts = rawCfg.ListenerFilterExcludePorts
+	if config.ListenerFilterExcludePorts == nil {
+		config.ListenerFilterExcludePorts = []int{}
+	}
+	listener, err := parseListeners(rawCfg, config.ListenerFilterExcludePorts)
 	if err != nil {
 		return nil, err
 	}
@@ -1370,7 +1377,27 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 	config.Users = parseAuthentication(rawCfg.Authentication)
 
-	config.Tunnels = rawCfg.Tunnels
+	config.Tunnels = make([]LC.Tunnel, 0)
+	for i := range rawCfg.Tunnels {
+		t := &rawCfg.Tunnels[i]
+		_, tPortStr, err := net.SplitHostPort(t.Address)
+		if err != nil {
+			log.Warnln("filtering config.Tunnels by ListenerFilterExcludePorts: can't do SplitHostPort to this addr: %s", t.Address)
+			// Go on
+		} else {
+			tPortRaw, err := strconv.ParseUint(tPortStr, 10, 16)
+			if err != nil {
+				return nil, fmt.Errorf("filtering config.Tunnels by ListenerFilterExcludePorts: bad port: %s in addr: %s", tPortStr, t.Address)
+			}
+			tPort := int(tPortRaw)
+			if lo.Contains(config.ListenerFilterExcludePorts, tPort) {
+				log.Infoln("filtering config.Tunnels by ListenerFilterExcludePorts: filtered out this tunnel: %#v", t)
+				// Exclude this tunnel
+				continue
+			}
+		}
+		config.Tunnels = append(config.Tunnels, *t)
+	}
 	// verify tunnels
 	for _, t := range config.Tunnels {
 		if len(t.Proxy) > 0 {
@@ -1607,11 +1634,28 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 	return proxies, providersMap, nil
 }
 
-func parseListeners(cfg *RawConfig) (listeners map[string]C.InboundListener, err error) {
+func parseListeners(cfg *RawConfig, filterExcludePorts []int) (listeners map[string]C.InboundListener, err error) {
 	L.ParseListenersStart()
 	defer L.ParseListenersEnd()
 	listeners = make(map[string]C.InboundListener)
 	for index, mapping := range cfg.Listeners {
+
+		lPortAny, hasPort := mapping["port"]
+		if !hasPort {
+			log.Warnln("filtering config.Listeners by ListenerFilterExcludePorts: missing port in this listener: %#v", mapping)
+		}
+		lPortStr := fmt.Sprintf("%d", lPortAny)
+		lPortRaw, err := strconv.ParseUint(lPortStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("filtering config.Listeners by ListenerFilterExcludePorts: bad port: %s in listener: %#v", lPortStr, mapping)
+		}
+		lPort := int(lPortRaw)
+		if lo.Contains(filterExcludePorts, lPort) {
+			log.Infoln("filtering config.Listeners by ListenerFilterExcludePorts: filtered out this listener: %#v", mapping)
+			// Exclude this listener
+			continue
+		}
+
 		listener, err := L.ParseListener(mapping)
 		if err != nil {
 			return nil, fmt.Errorf("proxy %d: %w", index, err)
