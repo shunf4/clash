@@ -96,10 +96,11 @@ type Inbound struct {
 
 // Controller config
 type Controller struct {
-	ExternalController    string `json:"-"`
-	ExternalControllerTLS string `json:"-"`
-	ExternalUI            string `json:"-"`
-	Secret                string `json:"-"`
+	ExternalController     string `json:"-"`
+	ExternalControllerTLS  string `json:"-"`
+	ExternalControllerUnix string `json:"-"`
+	ExternalUI             string `json:"-"`
+	Secret                 string `json:"-"`
 }
 
 // NTP config
@@ -276,6 +277,7 @@ type RawTun struct {
 	EndpointIndependentNat   bool           `yaml:"endpoint-independent-nat" json:"endpoint_independent_nat,omitempty"`
 	UDPTimeout               int64          `yaml:"udp-timeout" json:"udp_timeout,omitempty"`
 	FileDescriptor           int            `yaml:"file-descriptor" json:"file-descriptor"`
+	TableIndex               int            `yaml:"table-index" json:"table-index"`
 }
 
 type RawTuicServer struct {
@@ -315,6 +317,7 @@ type RawConfig struct {
 	DelayTestUrl            string            `yaml:"delay-test-url"`
 	IPv6                    bool              `yaml:"ipv6" json:"ipv6"`
 	ExternalController      string            `yaml:"external-controller"`
+	ExternalControllerUnix  string            `yaml:"external-controller-unix"`
 	ExternalControllerTLS   string            `yaml:"external-controller-tls"`
 	ExternalUI              string            `yaml:"external-ui"`
 	ExternalUIURL           string            `yaml:"external-ui-url" json:"external-ui-url"`
@@ -448,7 +451,7 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 		ProxyGroup:        []map[string]any{},
 		TCPConcurrent:     false,
 		FindProcessMode:   P.FindProcessStrict,
-		GlobalUA:          "clash.meta",
+		GlobalUA:          "clash.meta/" + C.Version,
 		Tun: RawTun{
 			Enable:              false,
 			Device:              "",
@@ -516,6 +519,11 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 				"www.msftnsci.com",
 				"www.msftconnecttest.com",
 			},
+		},
+		Experimental: Experimental{
+			// https://github.com/quic-go/quic-go/issues/4178
+			// Quic-go currently cannot automatically fall back on platforms that do not support ecn, so this feature is turned off by default.
+			QUICGoDisableECN: true,
 		},
 		Sniffer: RawSniffer{
 			Enable:          false,
@@ -1482,10 +1490,11 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 			InboundMPTCP:      cfg.InboundMPTCP,
 		},
 		Controller: Controller{
-			ExternalController:    cfg.ExternalController,
-			ExternalUI:            cfg.ExternalUI,
-			Secret:                cfg.Secret,
-			ExternalControllerTLS: cfg.ExternalControllerTLS,
+			ExternalController:     cfg.ExternalController,
+			ExternalUI:             cfg.ExternalUI,
+			Secret:                 cfg.Secret,
+			ExternalControllerUnix: cfg.ExternalControllerUnix,
+			ExternalControllerTLS:  cfg.ExternalControllerTLS,
 		},
 		UnifiedDelay:            cfg.UnifiedDelay,
 		Mode:                    cfg.Mode,
@@ -1729,7 +1738,7 @@ func parseRules(rulesConfig []string, proxies map[string]C.Proxy, subRules map[s
 
 		l := len(rule)
 
-		if ruleName == "NOT" || ruleName == "OR" || ruleName == "AND" || ruleName == "SUB-RULE" {
+		if ruleName == "NOT" || ruleName == "OR" || ruleName == "AND" || ruleName == "SUB-RULE" || ruleName == "DOMAIN-REGEX" {
 			target = rule[l-1]
 			payload = strings.Join(rule[1:l-1], ",")
 		} else {
@@ -2332,6 +2341,7 @@ func parseTun(rawTun RawTun, general *General) error {
 		EndpointIndependentNat:   rawTun.EndpointIndependentNat,
 		UDPTimeout:               rawTun.UDPTimeout,
 		FileDescriptor:           rawTun.FileDescriptor,
+		TableIndex:               rawTun.TableIndex,
 	}
 
 	return nil

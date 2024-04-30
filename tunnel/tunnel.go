@@ -13,6 +13,7 @@ import (
 	"time"
 
 	N "github.com/metacubex/mihomo/common/net"
+	"github.com/metacubex/mihomo/component/loopback"
 	"github.com/metacubex/mihomo/component/nat"
 	P "github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/resolver"
@@ -608,7 +609,7 @@ func match(metadata *C.Metadata) (C.Proxy, C.Rule, error) {
 	defer configMux.RUnlock()
 	var (
 		resolved             bool
-		attemptProcessLookup = true
+		attemptProcessLookup = metadata.Type != C.INNER
 	)
 
 	for _, rule := range getRules(metadata) {
@@ -761,6 +762,9 @@ func shouldStopRetry(err error, i *int, ctx context.Context) bool {
 		case <-ctx.Done():
 			return true
 		}
+		return true
+	}
+	if errors.Is(err, loopback.ErrReject) {
 		return true
 	}
 	return false
