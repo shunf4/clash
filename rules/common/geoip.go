@@ -31,7 +31,7 @@ func (g *GEOIP) Match(metadata *C.Metadata) (bool, string) {
 		return false, ""
 	}
 
-	if strings.EqualFold(g.country, "LAN") {
+	if strings.EqualFold(g.country, "LAN") || strings.EqualFold(g.country, "PRIVATE") {
 		return ip.IsPrivate() ||
 			ip.IsUnspecified() ||
 			ip.IsLoopback() ||
@@ -81,7 +81,7 @@ func NewGEOIP(country string, adapter string, noResolveIP bool) (*GEOIP, error) 
 		return nil, err
 	}
 
-	if !C.GeodataMode || strings.EqualFold(country, "LAN") {
+	if !C.GeodataMode || strings.EqualFold(country, "LAN") || strings.EqualFold(country, "PRIVATE") {
 		geoip := &GEOIP{
 			Base:        &Base{},
 			country:     country,
