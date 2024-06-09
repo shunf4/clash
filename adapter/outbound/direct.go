@@ -3,13 +3,13 @@ package outbound
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/netip"
 
 	N "github.com/metacubex/mihomo/common/net"
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/log"
 )
 
 type Direct struct {
@@ -25,7 +25,7 @@ type DirectOption struct {
 // DialContext implements C.ProxyAdapter
 func (d *Direct) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.Conn, error) {
 	if d.loopBack.CheckConn(metadata.SourceAddrPort()) {
-		return nil, fmt.Errorf("reject loopback connection to: %s", metadata.RemoteAddress())
+		log.Warnln("detected loopback connection from: %s (previous-local) to: %s", metadata.SourceAddrPort(), metadata.RemoteAddress())
 	}
 	opts = append(opts, dialer.WithResolver(resolver.DefaultResolver))
 	c, err := dialer.DialContext(ctx, "tcp", metadata.RemoteAddress(), d.Base.DialOptions(opts...)...)
@@ -39,7 +39,7 @@ func (d *Direct) DialContext(ctx context.Context, metadata *C.Metadata, opts ...
 // ListenPacketContext implements C.ProxyAdapter
 func (d *Direct) ListenPacketContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.PacketConn, error) {
 	if d.loopBack.CheckPacketConn(metadata.SourceAddrPort()) {
-		return nil, fmt.Errorf("reject loopback connection to: %s", metadata.RemoteAddress())
+		log.Warnln("detected loopback connection from: %s (previous-local) to: %s", metadata.SourceAddrPort(), metadata.RemoteAddress())
 	}
 	// net.UDPConn.WriteTo only working with *net.UDPAddr, so we need a net.UDPAddr
 	if !metadata.Resolved() {
