@@ -20,6 +20,7 @@ type cachedNameserversClient struct {
 	mu             sync.Mutex
 	clientName     string
 	cacheTimeout   time.Duration
+	overridePort   string
 	getNameservers func() (nameservers []string, err error)
 }
 
@@ -111,7 +112,11 @@ func (cnc *cachedNameserversClient) ExchangeContext(ctx context.Context, m *D.Ms
 
 	cnc.mu.Unlock()
 
-	conn, err := dialer.DialContext(ctx, "udp", net.JoinHostPort(ip.String(), "53"))
+	currPort := cnc.overridePort
+	if currPort == "" {
+		currPort = "53"
+	}
+	conn, err := dialer.DialContext(ctx, "udp", net.JoinHostPort(ip.String(), currPort))
 	if err != nil {
 		return nil, err
 	}

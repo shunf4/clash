@@ -15,7 +15,7 @@ fi
 for os in windows linux darwin ; do
 	suffix=""
 	if [ "$os" = "darwin" ]; then suffix=".rivet.macos"; fi
-	if [ "$os" = "linux" ]; then suffix=".rivet.linux"; fi
+	if [ "$os" = "linux" ]; then suffix=".rivet.linuxx64"; fi
 	if [ "$os" = "windows" ]; then suffix=".rivet.windows.exe"; fi
 	GOOS=$os go build -v -o ./bin/mhm"$suffix"
 done

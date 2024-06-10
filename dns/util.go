@@ -123,6 +123,13 @@ func transform(servers []NameServer, resolver *Resolver) []dnsClient {
 		}
 
 		if s.Net == "special" {
+			specialParts := strings.Split(s.Addr, ":")
+			overridePort := ""
+			if len(specialParts) > 1 {
+				overridePort = specialParts[len(specialParts)-1]
+				s.Addr = strings.Join(specialParts[0:len(specialParts)-1], ":")
+			}
+
 			switch s.Addr {
 			case "localResolveClient":
 				ret = append(ret, &localResolveClient{})
@@ -141,6 +148,7 @@ func transform(servers []NameServer, resolver *Resolver) []dnsClient {
 						UDPSize: 4096,
 						Timeout: 5 * time.Second,
 					},
+					overridePort: overridePort,
 				})
 			case "gatewaysClient":
 				ret = append(ret, &cachedNameserversClient{
@@ -157,6 +165,7 @@ func transform(servers []NameServer, resolver *Resolver) []dnsClient {
 						UDPSize: 4096,
 						Timeout: 5 * time.Second,
 					},
+					overridePort: overridePort,
 				})
 			default:
 				// It should not happen

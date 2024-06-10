@@ -1946,18 +1946,25 @@ func parseNameServer(servers []string, preferH3 bool) ([]dns.NameServer, error) 
 			dnsNetType = "dhcp" // UDP from DHCP
 		case "special":
 			dnsNetType = "special"
+			specialParts := strings.Split(u.Host, ":")
+			overridePortColon := ""
+			if len(specialParts) > 1 {
+				overridePortColon = ":" + specialParts[len(specialParts)-1]
+				u.Host = strings.Join(specialParts[0:len(specialParts)-1], ":")
+			}
 			switch u.Host {
 			case "dynamic-system-resolve-client":
-				addr = "localResolveClient"
+				addr = "localResolveClient" + overridePortColon
 			case "dynamic-dhcp-nameservers-client":
-				addr = "dhcpNameserversClient"
+				addr = "dhcpNameserversClient" + overridePortColon
 			case "dynamic-gateways-client":
-				addr = "gatewaysClient"
+				addr = "gatewaysClient" + overridePortColon
 			case "static-system-nameservers-on-clash-start":
 				currSystemNameservers, _, _ := netparam.GetSystemNameservers()
 				if len(currSystemNameservers) == 0 {
 					log.Warnln("%s: No current local DNS server was fetched.", u.Host)
 				}
+				currSystemNameservers = lo.Map(currSystemNameservers, func(x string, i int) string { return x + overridePortColon })
 				nameservers, err = batchAddNameservers(nameservers, currSystemNameservers, u.Host)
 				if err != nil {
 					return nil, err
@@ -1968,6 +1975,7 @@ func parseNameServer(servers []string, preferH3 bool) ([]dns.NameServer, error) 
 				if len(currDhcpNameservers) == 0 {
 					log.Warnln("%s: No current DHCP DNS server was fetched.", u.Host)
 				}
+				currDhcpNameservers = lo.Map(currDhcpNameservers, func(x string, i int) string { return x + overridePortColon })
 				nameservers, err = batchAddNameservers(nameservers, currDhcpNameservers, u.Host)
 				if err != nil {
 					return nil, err
@@ -1978,6 +1986,7 @@ func parseNameServer(servers []string, preferH3 bool) ([]dns.NameServer, error) 
 				if len(currGateways) == 0 {
 					log.Warnln("%s: No current gateway was fetched.", u.Host)
 				}
+				currGateways = lo.Map(currGateways, func(x string, i int) string { return x + overridePortColon })
 				nameservers, err = batchAddNameservers(nameservers, currGateways, u.Host)
 				if err != nil {
 					return nil, err
