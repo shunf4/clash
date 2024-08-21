@@ -1137,7 +1137,11 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			maps.Copy(config.Clashray.ClashrayHTTPRedirectMap, visitorNotPublisherHTTPRedirectMap)
 			if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
 				rawCfg.Listeners = append(rawCfg.Listeners, visitorNotPublisherVisitorTunnelListeners...)
-				maps.Copy(rawCfg.Hosts, visitorNotPublisherHosts)
+				if rawCfg.DNS.EnhancedMode == C.DNSFakeIP {
+					// shunf4 mod: on my android devices, we can't have any hosts for local listeners. these hosts should be resolved to fake ips, and proxied, allowing connections to any ports, including priveleged 80, to be processed..
+				} else {
+					maps.Copy(rawCfg.Hosts, visitorNotPublisherHosts)
+				}
 			}
 
 			rawCfg.ClashrayTestCORSAllowedOrigins = append(rawCfg.ClashrayTestCORSAllowedOrigins, visitorNotPublisherCORSAllowed...)
@@ -1157,7 +1161,11 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			maps.Copy(config.Clashray.ClashrayHTTPRedirectMap, publisherAlsoVisitorHTTPRedirectMap)
 			if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
 				rawCfg.Listeners = append(rawCfg.Listeners, publisherVisitorTunnelListeners...)
-				maps.Copy(rawCfg.Hosts, publisherAlsoVisitorHosts)
+				if rawCfg.DNS.EnhancedMode == C.DNSFakeIP {
+					// shunf4 mod: on my android devices, we can't have any hosts for local listeners. these hosts should be resolved to fake ips, and proxied, allowing connections to any ports, including priveleged 80, to be processed..
+				} else {
+					maps.Copy(rawCfg.Hosts, publisherAlsoVisitorHosts)
+				}
 			}
 		} else if !isVisitor && isCurrentPublisher {
 			publisherAction()
@@ -1201,7 +1209,11 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 				if strings.HasPrefix(v, "no-hosts:") || strings.HasPrefix(v, "no-hosts-nor-rule:") {
 					continue
 				}
-				rawCfg.Hosts[httpRedirectHost] = httpRedirectListener["listen"]
+				if rawCfg.DNS.EnhancedMode == C.DNSFakeIP {
+					// shunf4 mod: on my android devices, we can't have any hosts for local listeners. these hosts should be resolved to fake ips, and proxied, allowing connections to any ports, including priveleged 80, to be processed..
+				} else {
+					rawCfg.Hosts[httpRedirectHost] = httpRedirectListener["listen"]
+				}
 			}
 		}
 	}
@@ -1247,7 +1259,11 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			clashrayTestListener["target"] = "0.0.0.0" + ":" + "0"
 			clashrayTestListener["rule"] = "clashray-test-rule"
 
-			rawCfg.Hosts["test.clashray.home.arpa"] = clashrayTestListener["listen"]
+			if rawCfg.DNS.EnhancedMode == C.DNSFakeIP {
+				// shunf4 mod: on my android devices, we can't have any hosts for local listeners. these hosts should be resolved to fake ips, and proxied, allowing connections to any ports, including priveleged 80, to be processed..
+			} else {
+				rawCfg.Hosts["test.clashray.home.arpa"] = clashrayTestListener["listen"]
+			}
 		}
 	}
 	rawCfg.SubRules["clashray-test-rule"] = []string{
@@ -1281,7 +1297,11 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			clashraySendListener["target"] = "0.0.0.0" + ":" + "0"
 			clashraySendListener["rule"] = "clashray-send-rule"
 
-			rawCfg.Hosts["send.clashray.home.arpa"] = clashraySendListener["listen"]
+			if rawCfg.DNS.EnhancedMode == C.DNSFakeIP {
+				// shunf4 mod: on my android devices, we can't have any hosts for local listeners. these hosts should be resolved to fake ips, and proxied, allowing connections to any ports, including priveleged 80, to be processed..
+			} else {
+				rawCfg.Hosts["send.clashray.home.arpa"] = clashraySendListener["listen"]
+			}
 		}
 	}
 	rawCfg.SubRules["clashray-send-rule"] = []string{
