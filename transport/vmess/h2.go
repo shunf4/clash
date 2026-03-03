@@ -4,16 +4,17 @@ import (
 	"context"
 	"io"
 	"net"
-	"net/http"
 	"net/url"
 
-	"github.com/zhangyunhao116/fastrand"
-	"golang.org/x/net/http2"
+	N "github.com/metacubex/mihomo/common/net"
+
+	"github.com/metacubex/http"
+	"github.com/metacubex/randv2"
 )
 
 type h2Conn struct {
 	net.Conn
-	*http2.ClientConn
+	*http.Http2ClientConn
 	pwriter *io.PipeWriter
 	res     *http.Response
 	cfg     *H2Config
@@ -27,7 +28,7 @@ type H2Config struct {
 func (hc *h2Conn) establishConn() error {
 	preader, pwriter := io.Pipe()
 
-	host := hc.cfg.Hosts[fastrand.Intn(len(hc.cfg.Hosts))]
+	host := hc.cfg.Hosts[randv2.IntN(len(hc.cfg.Hosts))]
 	path := hc.cfg.Path
 	// TODO: connect use VMess Host instead of H2 Host
 	req := http.Request{
@@ -48,7 +49,7 @@ func (hc *h2Conn) establishConn() error {
 	}
 
 	// it will be close at :  `func (hc *h2Conn) Close() error`
-	res, err := hc.ClientConn.RoundTrip(&req)
+	res, err := hc.Http2ClientConn.RoundTrip(&req)
 	if err != nil {
 		return err
 	}
@@ -94,14 +95,19 @@ func (hc *h2Conn) Close() error {
 	if hc.res != nil {
 		ctx = hc.res.Request.Context()
 	}
-	if err := hc.ClientConn.Shutdown(ctx); err != nil {
+	if err := hc.Http2ClientConn.Shutdown(ctx); err != nil {
 		return err
 	}
 	return hc.Conn.Close()
 }
 
-func StreamH2Conn(conn net.Conn, cfg *H2Config) (net.Conn, error) {
-	transport := &http2.Transport{}
+func StreamH2Conn(ctx context.Context, conn net.Conn, cfg *H2Config) (_ net.Conn, err error) {
+	if ctx.Done() != nil {
+		done := N.SetupContextForConn(ctx, conn)
+		defer done(&err)
+	}
+
+	transport := &http.Http2Transport{}
 
 	cconn, err := transport.NewClientConn(conn)
 	if err != nil {
@@ -109,8 +115,8 @@ func StreamH2Conn(conn net.Conn, cfg *H2Config) (net.Conn, error) {
 	}
 
 	return &h2Conn{
-		Conn:       conn,
-		ClientConn: cconn,
-		cfg:        cfg,
+		Conn:            conn,
+		Http2ClientConn: cconn,
+		cfg:             cfg,
 	}, nil
 }

@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/metacubex/mihomo/adapter/outbound"
+	"github.com/dlclark/regexp2"
+
 	"github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/common/structure"
 	"github.com/metacubex/mihomo/common/utils"
 	C "github.com/metacubex/mihomo/constant"
-	types "github.com/metacubex/mihomo/constant/provider"
+	P "github.com/metacubex/mihomo/constant/provider"
+	"github.com/metacubex/mihomo/log"
 )
 
 var (
@@ -21,7 +23,6 @@ var (
 )
 
 type GroupCommonOption struct {
-	outbound.BasicOption
 	Name                string   `group:"name"`
 	Type                string   `group:"type"`
 	Proxies             []string `group:"proxies,omitempty"`
@@ -29,6 +30,7 @@ type GroupCommonOption struct {
 	URL                 string   `group:"url,omitempty"`
 	Interval            int      `group:"interval,omitempty"`
 	TestTimeout         int      `group:"timeout,omitempty"`
+	MaxFailedTimes      int      `group:"max-failed-times,omitempty"`
 	Lazy                bool     `group:"lazy,omitempty"`
 	DisableUDP          bool     `group:"disable-udp,omitempty"`
 	Filter              string   `group:"filter,omitempty"`
@@ -42,7 +44,7 @@ type GroupCommonOption struct {
 	Icon                string   `group:"icon,omitempty"`
 }
 
-func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, providersMap map[string]types.ProxyProvider, AllProxies []string, AllProviders []string) (C.ProxyAdapter, error) {
+func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, providersMap map[string]P.ProxyProvider, AllProxies []string, AllProviders []string) (C.ProxyAdapter, error) {
 	decoder := structure.NewDecoder(structure.Option{TagName: "group", WeaklyTypedInput: true})
 
 	groupOption := &GroupCommonOption{
@@ -56,28 +58,51 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
 		return nil, errFormat
 	}
 
+	if _, ok := config["routing-mark"]; ok {
+		log.Errorln("The group [%s] with routing-mark configuration was removed, please set it directly on the proxy instead", groupOption.Name)
+	}
+	if _, ok := config["interface-name"]; ok {
+		log.Errorln("The group [%s] with interface-name configuration was removed, please set it directly on the proxy instead", groupOption.Name)
+	}
+	if _, ok := config["dialer-proxy"]; ok {
+		log.Errorln("The group [%s] with dialer-proxy configuration is not allowed, please set it directly on the proxy instead", groupOption.Name)
+	}
+
 	groupName := groupOption.Name
 
-	providers := []types.ProxyProvider{}
+	providers := []P.ProxyProvider{}
 
 	if groupOption.IncludeAll {
 		groupOption.IncludeAllProviders = true
 		groupOption.IncludeAllProxies = true
 	}
-	var GroupUse []string
-	var GroupProxies []string
+
 	if groupOption.IncludeAllProviders {
-		GroupUse = append(GroupUse, AllProviders...)
-	} else {
-		GroupUse = groupOption.Use
+		groupOption.Use = AllProviders
 	}
 	if groupOption.IncludeAllProxies {
-		GroupProxies = append(groupOption.Proxies, AllProxies...)
-	} else {
-		GroupProxies = groupOption.Proxies
+		if groupOption.Filter != "" {
+			var filterRegs []*regexp2.Regexp
+			for _, filter := range strings.Split(groupOption.Filter, "`") {
+				filterReg := regexp2.MustCompile(filter, regexp2.None)
+				filterRegs = append(filterRegs, filterReg)
+			}
+			for _, p := range AllProxies {
+				for _, filterReg := range filterRegs {
+					if mat, _ := filterReg.MatchString(p); mat {
+						groupOption.Proxies = append(groupOption.Proxies, p)
+					}
+				}
+			}
+		} else {
+			groupOption.Proxies = append(groupOption.Proxies, AllProxies...)
+		}
+		if len(groupOption.Proxies) == 0 && len(groupOption.Use) == 0 {
+			groupOption.Proxies = []string{"COMPATIBLE"}
+		}
 	}
 
-	if len(GroupProxies) == 0 && len(GroupUse) == 0 {
+	if len(groupOption.Proxies) == 0 && len(groupOption.Use) == 0 {
 		return nil, fmt.Errorf("%s: %w", groupName, errMissProxy)
 	}
 
@@ -91,17 +116,32 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
 		status = "*"
 	}
 	groupOption.ExpectedStatus = status
-	testUrl := groupOption.URL
 
-	if groupOption.Type != "select" && groupOption.Type != "relay" {
-		if groupOption.URL == "" {
-			groupOption.URL = C.DefaultTestURL
-			testUrl = groupOption.URL
+	if len(groupOption.Use) != 0 {
+		PDs, err := getProviders(providersMap, groupOption.Use)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", groupName, err)
 		}
+
+		// if test URL is empty, use the first health check URL of providers
+		if groupOption.URL == "" {
+			for _, pd := range PDs {
+				if pd.HealthCheckURL() != "" {
+					groupOption.URL = pd.HealthCheckURL()
+					break
+				}
+			}
+			if groupOption.URL == "" {
+				groupOption.URL = C.DefaultTestURL
+			}
+		} else {
+			addTestUrlToProviders(PDs, groupOption.URL, expectedStatus, groupOption.Filter, uint(groupOption.Interval))
+		}
+		providers = append(providers, PDs...)
 	}
 
-	if len(GroupProxies) != 0 {
-		ps, err := getProxies(proxyMap, GroupProxies)
+	if len(groupOption.Proxies) != 0 {
+		ps, err := getProxies(proxyMap, groupOption.Proxies)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", groupName, err)
 		}
@@ -110,36 +150,26 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
 			return nil, fmt.Errorf("%s: %w", groupName, errDuplicateProvider)
 		}
 
-		// select don't need health check
+		if groupOption.URL == "" {
+			groupOption.URL = C.DefaultTestURL
+		}
+
+		// select don't need auto health check
 		if groupOption.Type != "select" && groupOption.Type != "relay" {
 			if groupOption.Interval == 0 {
 				groupOption.Interval = 300
 			}
 		}
 
-		hc := provider.NewHealthCheck(ps, testUrl, uint(groupOption.TestTimeout), uint(groupOption.Interval), groupOption.Lazy, expectedStatus)
+		hc := provider.NewHealthCheck(ps, groupOption.URL, uint(groupOption.TestTimeout), uint(groupOption.Interval), groupOption.Lazy, expectedStatus)
 
 		pd, err := provider.NewCompatibleProvider(groupName, ps, hc)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", groupName, err)
 		}
 
-		providers = append(providers, pd)
+		providers = append([]P.ProxyProvider{pd}, providers...)
 		providersMap[groupName] = pd
-	}
-
-	if len(GroupUse) != 0 {
-		list, err := getProviders(providersMap, GroupUse)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", groupName, err)
-		}
-
-		// different proxy groups use different test URL
-		addTestUrlToProviders(list, testUrl, expectedStatus, groupOption.Filter, uint(groupOption.Interval))
-
-		providers = append(providers, list...)
-	} else {
-		groupOption.Filter = ""
 	}
 
 	var group C.ProxyAdapter
@@ -155,7 +185,7 @@ func ParseProxyGroup(config map[string]any, proxyMap map[string]C.Proxy, provide
 		strategy := parseStrategy(config)
 		return NewLoadBalance(groupOption, providers, strategy)
 	case "relay":
-		group = NewRelay(groupOption, providers)
+		return nil, fmt.Errorf("%w: The group [%s] with relay type was removed, please using dialer-proxy instead", errType, groupName)
 	default:
 		return nil, fmt.Errorf("%w: %s", errType, groupOption.Type)
 	}
@@ -175,15 +205,15 @@ func getProxies(mapping map[string]C.Proxy, list []string) ([]C.Proxy, error) {
 	return ps, nil
 }
 
-func getProviders(mapping map[string]types.ProxyProvider, list []string) ([]types.ProxyProvider, error) {
-	var ps []types.ProxyProvider
+func getProviders(mapping map[string]P.ProxyProvider, list []string) ([]P.ProxyProvider, error) {
+	var ps []P.ProxyProvider
 	for _, name := range list {
 		p, ok := mapping[name]
 		if !ok {
 			return nil, fmt.Errorf("'%s' not found", name)
 		}
 
-		if p.VehicleType() == types.Compatible {
+		if p.VehicleType() == P.Compatible {
 			return nil, fmt.Errorf("proxy group %s can't contains in `use`", name)
 		}
 		ps = append(ps, p)
@@ -191,7 +221,7 @@ func getProviders(mapping map[string]types.ProxyProvider, list []string) ([]type
 	return ps, nil
 }
 
-func addTestUrlToProviders(providers []types.ProxyProvider, url string, expectedStatus utils.IntRanges[uint16], filter string, interval uint) {
+func addTestUrlToProviders(providers []P.ProxyProvider, url string, expectedStatus utils.IntRanges[uint16], filter string, interval uint) {
 	if len(providers) == 0 || len(url) == 0 {
 		return
 	}

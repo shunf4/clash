@@ -10,7 +10,7 @@ import (
 )
 
 type Uid struct {
-	*Base
+	Base
 	uids    utils.IntRanges[uint32]
 	oUid    string
 	adapter string
@@ -30,7 +30,7 @@ func NewUid(oUid, adapter string) (*Uid, error) {
 		return nil, errPayload
 	}
 	return &Uid{
-		Base:    &Base{},
+		Base:    Base{},
 		adapter: adapter,
 		oUid:    oUid,
 		uids:    uidRange,
@@ -41,7 +41,10 @@ func (u *Uid) RuleType() C.RuleType {
 	return C.Uid
 }
 
-func (u *Uid) Match(metadata *C.Metadata) (bool, string) {
+func (u *Uid) Match(metadata *C.Metadata, helper C.RuleMatchHelper) (bool, string) {
+	if helper.FindProcess != nil {
+		helper.FindProcess()
+	}
 	if metadata.Uid != 0 {
 		if u.uids.Check(metadata.Uid) {
 			return true, u.adapter
@@ -59,6 +62,4 @@ func (u *Uid) Payload() string {
 	return u.oUid
 }
 
-func (u *Uid) ShouldFindProcess() bool {
-	return true
-}
+var _ C.Rule = (*Uid)(nil)

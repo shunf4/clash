@@ -6,8 +6,10 @@ import (
 	"net"
 	"time"
 
-	"github.com/sagernet/tfo-go"
+	"github.com/metacubex/tfo-go"
 )
+
+var DisableTFO = false
 
 type tfoConn struct {
 	net.Conn

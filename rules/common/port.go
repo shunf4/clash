@@ -8,7 +8,7 @@ import (
 )
 
 type Port struct {
-	*Base
+	Base
 	adapter    string
 	port       string
 	ruleType   C.RuleType
@@ -19,7 +19,7 @@ func (p *Port) RuleType() C.RuleType {
 	return p.ruleType
 }
 
-func (p *Port) Match(metadata *C.Metadata) (bool, string) {
+func (p *Port) Match(metadata *C.Metadata, helper C.RuleMatchHelper) (bool, string) {
 	targetPort := metadata.DstPort
 	switch p.ruleType {
 	case C.InPort:
@@ -49,7 +49,7 @@ func NewPort(port string, adapter string, ruleType C.RuleType) (*Port, error) {
 	}
 
 	return &Port{
-		Base:       &Base{},
+		Base:       Base{},
 		adapter:    adapter,
 		port:       port,
 		ruleType:   ruleType,

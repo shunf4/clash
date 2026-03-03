@@ -19,6 +19,8 @@ func (lrc *localResolveClient) Exchange(m *D.Msg) (msg *D.Msg, err error) {
 	return lrc.ExchangeContext(context.Background(), m)
 }
 
+func (lrc *localResolveClient) ResetConnection() {}
+
 func (lrc *localResolveClient) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, err error) {
 	q := &m.Question[0]
 

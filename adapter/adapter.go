@@ -5,18 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
-	"net/netip"
 	"net/url"
-	"strconv"
+	"strings"
 	"time"
 
 	"github.com/metacubex/mihomo/common/atomic"
 	"github.com/metacubex/mihomo/common/queue"
 	"github.com/metacubex/mihomo/common/utils"
-	"github.com/metacubex/mihomo/component/dialer"
+	"github.com/metacubex/mihomo/common/xsync"
+	"github.com/metacubex/mihomo/component/ca"
 	C "github.com/metacubex/mihomo/constant"
-	"github.com/puzpuzpuz/xsync/v3"
+	"github.com/metacubex/mihomo/log"
+
+	"github.com/metacubex/http"
 )
 
 var UnifiedDelay = atomic.NewBool(false)
@@ -34,7 +35,12 @@ type Proxy struct {
 	C.ProxyAdapter
 	alive   atomic.Bool
 	history *queue.Queue[C.DelayHistory]
-	extra   *xsync.MapOf[string, *internalProxyState]
+	extra   xsync.Map[string, *internalProxyState]
+}
+
+// Adapter implements C.Proxy
+func (p *Proxy) Adapter() C.ProxyAdapter {
+	return p.ProxyAdapter
 }
 
 // AliveForTestUrl implements C.Proxy
@@ -46,29 +52,15 @@ func (p *Proxy) AliveForTestUrl(url string) bool {
 	return p.alive.Load()
 }
 
-// Dial implements C.Proxy
-func (p *Proxy) Dial(metadata *C.Metadata) (C.Conn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTCPTimeout)
-	defer cancel()
-	return p.DialContext(ctx, metadata)
-}
-
 // DialContext implements C.ProxyAdapter
-func (p *Proxy) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.Conn, error) {
-	conn, err := p.ProxyAdapter.DialContext(ctx, metadata, opts...)
+func (p *Proxy) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
+	conn, err := p.ProxyAdapter.DialContext(ctx, metadata)
 	return conn, err
 }
 
-// DialUDP implements C.ProxyAdapter
-func (p *Proxy) DialUDP(metadata *C.Metadata) (C.PacketConn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), C.DefaultUDPTimeout)
-	defer cancel()
-	return p.ListenPacketContext(ctx, metadata)
-}
-
 // ListenPacketContext implements C.ProxyAdapter
-func (p *Proxy) ListenPacketContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.PacketConn, error) {
-	pc, err := p.ProxyAdapter.ListenPacketContext(ctx, metadata, opts...)
+func (p *Proxy) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (C.PacketConn, error) {
+	pc, err := p.ProxyAdapter.ListenPacketContext(ctx, metadata)
 	return pc, err
 }
 
@@ -154,8 +146,18 @@ func (p *Proxy) MarshalJSON() ([]byte, error) {
 	mapping["alive"] = p.alive.Load()
 	mapping["name"] = p.Name()
 	mapping["udp"] = p.SupportUDP()
-	mapping["xudp"] = p.SupportXUDP()
-	mapping["tfo"] = p.SupportTFO()
+	mapping["uot"] = p.SupportUOT()
+
+	proxyInfo := p.ProxyInfo()
+	mapping["xudp"] = proxyInfo.XUDP
+	mapping["tfo"] = proxyInfo.TFO
+	mapping["mptcp"] = proxyInfo.MPTCP
+	mapping["smux"] = proxyInfo.SMUX
+	mapping["interface"] = proxyInfo.Interface
+	mapping["routing-mark"] = proxyInfo.RoutingMark
+	mapping["provider-name"] = proxyInfo.ProviderName
+	mapping["dialer-proxy"] = proxyInfo.DialerProxy
+
 	return json.Marshal(mapping)
 }
 
@@ -177,14 +179,12 @@ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.In
 			p.history.Pop()
 		}
 
-		state, ok := p.extra.Load(url)
-		if !ok {
-			state = &internalProxyState{
+		state, _ := p.extra.LoadOrStoreFn(url, func() *internalProxyState {
+			return &internalProxyState{
 				history: queue.New[C.DelayHistory](defaultHistoriesNum),
 				alive:   atomic.NewBool(true),
 			}
-			p.extra.Store(url, state)
-		}
+		})
 
 		if !satisfied {
 			record.Delay = 0
@@ -221,6 +221,11 @@ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.In
 	}
 	req = req.WithContext(ctx)
 
+	tlsConfig, err := ca.GetTLSConfig(ca.Option{})
+	if err != nil {
+		return
+	}
+
 	transport := &http.Transport{
 		DialContext: func(context.Context, string, string) (net.Conn, error) {
 			return instance, nil
@@ -230,6 +235,7 @@ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.In
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		TLSClientConfig:       tlsConfig,
 	}
 
 	client := http.Client{
@@ -252,10 +258,18 @@ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.In
 
 	if unifiedDelay {
 		second := time.Now()
-		resp, err = client.Do(req)
-		if err == nil {
+		var ignoredErr error
+		var secondResp *http.Response
+		secondResp, ignoredErr = client.Do(req)
+		if ignoredErr == nil {
+			resp = secondResp
 			_ = resp.Body.Close()
 			start = second
+		} else {
+			if strings.HasPrefix(url, "http://") {
+				log.Errorln("%s failed to get the second response from %s: %v", p.Name(), url, ignoredErr)
+				log.Warnln("It is recommended to use HTTPS for provider.health-check.url and group.url to ensure better reliability. Due to some proxy providers hijacking test addresses and not being compatible with repeated HEAD requests, using HTTP may result in failed tests.")
+			}
 		}
 	}
 
@@ -263,12 +277,13 @@ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.In
 	t = uint16(time.Since(start) / time.Millisecond)
 	return
 }
+
 func NewProxy(adapter C.ProxyAdapter) *Proxy {
 	return &Proxy{
 		ProxyAdapter: adapter,
 		history:      queue.New[C.DelayHistory](defaultHistoriesNum),
 		alive:        atomic.NewBool(true),
-		extra:        xsync.NewMapOf[string, *internalProxyState]()}
+	}
 }
 
 func urlToMetadata(rawURL string) (addr C.Metadata, err error) {
@@ -289,15 +304,7 @@ func urlToMetadata(rawURL string) (addr C.Metadata, err error) {
 			return
 		}
 	}
-	uintPort, err := strconv.ParseUint(port, 10, 16)
-	if err != nil {
-		return
-	}
 
-	addr = C.Metadata{
-		Host:    u.Hostname(),
-		DstIP:   netip.Addr{},
-		DstPort: uint16(uintPort),
-	}
+	err = addr.SetRemoteAddress(net.JoinHostPort(u.Hostname(), port))
 	return
 }

@@ -4,10 +4,10 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/netip"
 	"time"
 
 	"github.com/metacubex/mihomo/common/buf"
-	"github.com/metacubex/mihomo/component/dialer"
 	C "github.com/metacubex/mihomo/constant"
 )
 
@@ -17,11 +17,12 @@ type Reject struct {
 }
 
 type RejectOption struct {
+	BasicOption
 	Name string `proxy:"name"`
 }
 
 // DialContext implements C.ProxyAdapter
-func (r *Reject) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.Conn, error) {
+func (r *Reject) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
 	if r.drop {
 		return NewConn(dropConn{}, r), nil
 	}
@@ -29,15 +30,25 @@ func (r *Reject) DialContext(ctx context.Context, metadata *C.Metadata, opts ...
 }
 
 // ListenPacketContext implements C.ProxyAdapter
-func (r *Reject) ListenPacketContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.PacketConn, error) {
+func (r *Reject) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (C.PacketConn, error) {
+	if err := r.ResolveUDP(ctx, metadata); err != nil {
+		return nil, err
+	}
 	return newPacketConn(&nopPacketConn{}, r), nil
+}
+
+func (r *Reject) ResolveUDP(ctx context.Context, metadata *C.Metadata) error {
+	if !metadata.Resolved() {
+		metadata.DstIP = netip.IPv4Unspecified()
+	}
+	return nil
 }
 
 func NewRejectWithOption(option RejectOption) *Reject {
 	return &Reject{
 		Base: &Base{
 			name: option.Name,
-			tp:   C.Direct,
+			tp:   C.Reject,
 			udp:  true,
 		},
 	}

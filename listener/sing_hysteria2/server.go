@@ -2,27 +2,31 @@ package sing_hysteria2
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/metacubex/mihomo/adapter/inbound"
 	"github.com/metacubex/mihomo/adapter/outbound"
-	CN "github.com/metacubex/mihomo/common/net"
 	"github.com/metacubex/mihomo/common/sockopt"
+	"github.com/metacubex/mihomo/component/ca"
+	"github.com/metacubex/mihomo/component/ech"
 	C "github.com/metacubex/mihomo/constant"
 	LC "github.com/metacubex/mihomo/listener/config"
+	"github.com/metacubex/mihomo/listener/inner"
 	"github.com/metacubex/mihomo/listener/sing"
 	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/ntp"
 
+	"github.com/metacubex/http"
+	"github.com/metacubex/http/httputil"
+	"github.com/metacubex/quic-go"
 	"github.com/metacubex/sing-quic/hysteria2"
-
-	E "github.com/sagernet/sing/common/exceptions"
+	E "github.com/metacubex/sing/common/exceptions"
+	"github.com/metacubex/tls"
 )
 
 type Listener struct {
@@ -54,13 +58,36 @@ func New(config LC.Hysteria2Server, tunnel C.Tunnel, additions ...inbound.Additi
 
 	sl = &Listener{false, config, nil, nil}
 
-	cert, err := CN.ParseCert(config.Certificate, config.PrivateKey, C.Path)
+	tlsConfig := &tls.Config{
+		Time:       ntp.Now,
+		MinVersion: tls.VersionTLS13,
+	}
+	certLoader, err := ca.NewTLSKeyPairLoader(config.Certificate, config.PrivateKey)
 	if err != nil {
 		return nil, err
 	}
-	tlsConfig := &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{cert},
+	tlsConfig.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		return certLoader()
+	}
+	tlsConfig.ClientAuth = ca.ClientAuthTypeFromString(config.ClientAuthType)
+	if len(config.ClientAuthCert) > 0 {
+		if tlsConfig.ClientAuth == tls.NoClientCert {
+			tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		}
+	}
+	if tlsConfig.ClientAuth == tls.VerifyClientCertIfGiven || tlsConfig.ClientAuth == tls.RequireAndVerifyClientCert {
+		pool, err := ca.LoadCertificates(config.ClientAuthCert)
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig.ClientCAs = pool
+	}
+
+	if config.EchKey != "" {
+		err = ech.LoadECHKey(config.EchKey, tlsConfig)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(config.ALPN) > 0 {
 		tlsConfig.NextProtos = config.ALPN
@@ -98,6 +125,21 @@ func New(config LC.Hysteria2Server, tunnel C.Tunnel, additions ...inbound.Additi
 				ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 					w.WriteHeader(http.StatusBadGateway)
 				},
+				Transport: &http.Transport{
+					// fellow hysteria2's code skip verify
+					TLSClientConfig: &tls.Config{
+						InsecureSkipVerify: true,
+					},
+					// from http.DefaultTransport
+					ForceAttemptHTTP2:     true,
+					MaxIdleConns:          100,
+					IdleConnTimeout:       90 * time.Second,
+					TLSHandshakeTimeout:   10 * time.Second,
+					ExpectContinueTimeout: 1 * time.Second,
+					DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+						return inner.HandleTcp(tunnel, address, "")
+					},
+				},
 			}
 		default:
 			return nil, E.New("unknown masquerade URL scheme: ", masqueradeURL.Scheme)
@@ -110,6 +152,13 @@ func New(config LC.Hysteria2Server, tunnel C.Tunnel, additions ...inbound.Additi
 		config.UdpMTU = 1200 - 3
 	}
 
+	quicConfig := &quic.Config{
+		InitialStreamReceiveWindow:     config.InitialStreamReceiveWindow,
+		MaxStreamReceiveWindow:         config.MaxStreamReceiveWindow,
+		InitialConnectionReceiveWindow: config.InitialConnectionReceiveWindow,
+		MaxConnectionReceiveWindow:     config.MaxConnectionReceiveWindow,
+	}
+
 	service, err := hysteria2.NewService[string](hysteria2.ServiceOptions{
 		Context:               context.Background(),
 		Logger:                log.SingLogger,
@@ -117,7 +166,9 @@ func New(config LC.Hysteria2Server, tunnel C.Tunnel, additions ...inbound.Additi
 		ReceiveBPS:            outbound.StringToBps(config.Down),
 		SalamanderPassword:    salamanderPassword,
 		TLSConfig:             tlsConfig,
+		QUICConfig:            quicConfig,
 		IgnoreClientBandwidth: config.IgnoreClientBandwidth,
+		UDPTimeout:            sing.UDPTimeout,
 		Handler:               h,
 		MasqueradeHandler:     masqueradeHandler,
 		CWND:                  config.CWND,
@@ -140,13 +191,12 @@ func New(config LC.Hysteria2Server, tunnel C.Tunnel, additions ...inbound.Additi
 		_service := *service
 		service := &_service // make a copy
 
-		ul, err := net.ListenPacket("udp", addr)
+		ul, err := inbound.ListenPacket("udp", addr)
 		if err != nil {
 			return nil, err
 		}
 
-		err = sockopt.UDPReuseaddr(ul.(*net.UDPConn))
-		if err != nil {
+		if err := sockopt.UDPReuseaddr(ul); err != nil {
 			log.Warnln("Failed to Reuse UDP Address: %s", err)
 		}
 

@@ -2,7 +2,6 @@ package dns
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -12,18 +11,15 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/common/lru"
-	N "github.com/metacubex/mihomo/common/net"
-	"github.com/metacubex/mihomo/common/nnip"
 	"github.com/metacubex/mihomo/common/picker"
-	"github.com/metacubex/mihomo/component/dialer"
+	"github.com/metacubex/mihomo/component/ech/echparser"
 	"github.com/metacubex/mihomo/component/resolver"
-	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/dns/netparam"
 	"github.com/metacubex/mihomo/log"
-	"github.com/metacubex/mihomo/tunnel"
 
 	D "github.com/miekg/dns"
 	"github.com/samber/lo"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -99,100 +95,186 @@ func isIPRequest(q D.Question) bool {
 
 func transform(servers []NameServer, resolver *Resolver) []dnsClient {
 	ret := make([]dnsClient, 0, len(servers))
+lllll1:
 	for _, s := range servers {
+		var c dnsClient
 		switch s.Net {
+		case "tls":
+			c = newDoTClient(s.Addr, resolver, s.Params, s.ProxyAdapter, s.ProxyName)
 		case "https":
-			ret = append(ret, newDoHClient(s.Addr, resolver, s.PreferH3, s.Params, s.ProxyAdapter, s.ProxyName))
-			continue
+			c = newDoHClient(s.Addr, resolver, s.PreferH3, s.Params, s.ProxyAdapter, s.ProxyName)
 		case "dhcp":
-			ret = append(ret, newDHCPClient(s.Addr))
-			continue
+			c = newDHCPClient(s.Addr)
 		case "system":
-			ret = append(ret, newSystemClient())
-			continue
+			c = newSystemClient()
 		case "rcode":
-			ret = append(ret, newRCodeClient(s.Addr))
-			continue
+			c = newRCodeClient(s.Addr)
 		case "quic":
-			if doq, err := newDoQ(resolver, s.Addr, s.ProxyAdapter, s.ProxyName); err == nil {
-				ret = append(ret, doq)
-			} else {
-				log.Fatalln("DoQ format error: %v", err)
+			c = newDoQ(s.Addr, resolver, s.Params, s.ProxyAdapter, s.ProxyName)
+		default:
+			if s.Net == "special" {
+				specialParts := strings.Split(s.Addr, ":")
+				overridePort := ""
+				if len(specialParts) > 1 {
+					overridePort = specialParts[len(specialParts)-1]
+					s.Addr = strings.Join(specialParts[0:len(specialParts)-1], ":")
+				}
+
+				switch s.Addr {
+				case "localResolveClient":
+					ret = append(ret, &localResolveClient{})
+				case "dhcpNameserversClient":
+					ret = append(ret, &cachedNameserversClient{
+						cache:          lru.New[string, net.IP](lru.WithAge[string, net.IP](5)),
+						cacheTimeout:   5 * time.Second,
+						lastNameserver: "",
+						clientName:     s.Addr,
+						getNameservers: func() (nameservers []string, err error) {
+							nameservers, _, _ = netparam.GetDhcpNameservers()
+							return
+						},
+						Client: &D.Client{
+							Net:     "udp",
+							UDPSize: 4096,
+							Timeout: 5 * time.Second,
+						},
+						overridePort: overridePort,
+					})
+				case "gatewaysClient":
+					ret = append(ret, &cachedNameserversClient{
+						cache:          lru.New[string, net.IP](lru.WithAge[string, net.IP](5)),
+						cacheTimeout:   5 * time.Second,
+						lastNameserver: "",
+						clientName:     s.Addr,
+						getNameservers: func() (nameservers []string, err error) {
+							nameservers = netparam.GetGateways()
+							return
+						},
+						Client: &D.Client{
+							Net:     "udp",
+							UDPSize: 4096,
+							Timeout: 5 * time.Second,
+						},
+						overridePort: overridePort,
+					})
+				default:
+					// It should not happen
+					log.Warnln("DNS special:// bad body: %s", s.Addr)
+				}
+				continue lllll1
 			}
-			continue
+			c = newClient(s.Addr, resolver, s.Net, s.Params, s.ProxyAdapter, s.ProxyName)
 		}
 
-		if s.Net == "special" {
-			specialParts := strings.Split(s.Addr, ":")
-			overridePort := ""
-			if len(specialParts) > 1 {
-				overridePort = specialParts[len(specialParts)-1]
-				s.Addr = strings.Join(specialParts[0:len(specialParts)-1], ":")
-			}
+		c = warpClientWithEdns0Subnet(c, s.Params)
+		c = warpClientWithDisableTypes(c, s.Params)
 
-			switch s.Addr {
-			case "localResolveClient":
-				ret = append(ret, &localResolveClient{})
-			case "dhcpNameserversClient":
-				ret = append(ret, &cachedNameserversClient{
-					cache:          lru.New[string, net.IP](lru.WithAge[string, net.IP](5)),
-					cacheTimeout:   5 * time.Second,
-					lastNameserver: "",
-					clientName:     s.Addr,
-					getNameservers: func() (nameservers []string, err error) {
-						nameservers, _, _ = netparam.GetDhcpNameservers()
-						return
-					},
-					Client: &D.Client{
-						Net:     "udp",
-						UDPSize: 4096,
-						Timeout: 5 * time.Second,
-					},
-					overridePort: overridePort,
-				})
-			case "gatewaysClient":
-				ret = append(ret, &cachedNameserversClient{
-					cache:          lru.New[string, net.IP](lru.WithAge[string, net.IP](5)),
-					cacheTimeout:   5 * time.Second,
-					lastNameserver: "",
-					clientName:     s.Addr,
-					getNameservers: func() (nameservers []string, err error) {
-						nameservers = netparam.GetGateways()
-						return
-					},
-					Client: &D.Client{
-						Net:     "udp",
-						UDPSize: 4096,
-						Timeout: 5 * time.Second,
-					},
-					overridePort: overridePort,
-				})
-			default:
-				// It should not happen
-				log.Warnln("DNS special:// bad body: %s", s.Addr)
-			}
-			continue
-		}
-
-		host, port, _ := net.SplitHostPort(s.Addr)
-		ret = append(ret, &client{
-			Client: &D.Client{
-				Net: s.Net,
-				TLSConfig: &tls.Config{
-					ServerName: host,
-				},
-				UDPSize: 4096,
-				Timeout: 5 * time.Second,
-			},
-			port:         port,
-			host:         host,
-			iface:        s.Interface,
-			r:            resolver,
-			proxyAdapter: s.ProxyAdapter,
-			proxyName:    s.ProxyName,
-		})
+		ret = append(ret, c)
 	}
 	return ret
+}
+
+type clientWithDisableTypes struct {
+	dnsClient
+	disableTypes map[uint16]struct{}
+}
+
+func (c clientWithDisableTypes) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, err error) {
+	// filter dns request
+	if slices.ContainsFunc(m.Question, c.inQuestion) {
+		// In fact, DNS requests are not allowed to contain multiple questions:
+		// https://stackoverflow.com/questions/4082081/requesting-a-and-aaaa-records-in-single-dns-query/4083071
+		// so, when we find a question containing the type, we can simply discard the entire dns request.
+		return handleMsgWithEmptyAnswer(m), nil
+	}
+
+	// do real exchange
+	msg, err = c.dnsClient.ExchangeContext(ctx, m)
+	if err != nil {
+		return
+	}
+
+	// filter dns response
+	msg.Answer = slices.DeleteFunc(msg.Answer, c.inRR)
+	msg.Ns = slices.DeleteFunc(msg.Ns, c.inRR)
+	msg.Extra = slices.DeleteFunc(msg.Extra, c.inRR)
+	return
+}
+
+func (c clientWithDisableTypes) inQuestion(q D.Question) bool {
+	_, ok := c.disableTypes[q.Qtype]
+	return ok
+}
+
+func (c clientWithDisableTypes) inRR(rr D.RR) bool {
+	_, ok := c.disableTypes[rr.Header().Rrtype]
+	return ok
+}
+
+func warpClientWithDisableTypes(c dnsClient, params map[string]string) dnsClient {
+	disableTypes := make(map[uint16]struct{})
+	if params["disable-ipv4"] == "true" {
+		disableTypes[D.TypeA] = struct{}{}
+	}
+	if params["disable-ipv6"] == "true" {
+		disableTypes[D.TypeAAAA] = struct{}{}
+	}
+	for key, value := range params {
+		const prefix = "disable-qtype-"
+		if strings.HasPrefix(key, prefix) && value == "true" { // eg: disable-qtype-65=true
+			qType, err := strconv.ParseUint(key[len(prefix):], 10, 16)
+			if err != nil {
+				continue
+			}
+			if _, ok := D.TypeToRR[uint16(qType)]; !ok { // check valid RR_Header.Rrtype and Question.qtype
+				continue
+			}
+			disableTypes[uint16(qType)] = struct{}{}
+		}
+	}
+	if len(disableTypes) > 0 {
+		return clientWithDisableTypes{c, disableTypes}
+	}
+	return c
+}
+
+type clientWithEdns0Subnet struct {
+	dnsClient
+	ecsPrefix   netip.Prefix
+	ecsOverride bool
+}
+
+func (c clientWithEdns0Subnet) ExchangeContext(ctx context.Context, m *D.Msg) (*D.Msg, error) {
+	m = m.Copy()
+	setEdns0Subnet(m, c.ecsPrefix, c.ecsOverride)
+	return c.dnsClient.ExchangeContext(ctx, m)
+}
+
+func warpClientWithEdns0Subnet(c dnsClient, params map[string]string) dnsClient {
+	var ecsPrefix netip.Prefix
+	var ecsOverride bool
+	if ecs := params["ecs"]; ecs != "" {
+		prefix, err := netip.ParsePrefix(ecs)
+		if err != nil {
+			addr, err := netip.ParseAddr(ecs)
+			if err != nil {
+				log.Warnln("DNS [%s] config with invalid ecs: %s", c.Address(), ecs)
+			} else {
+				ecsPrefix = netip.PrefixFrom(addr, addr.BitLen())
+			}
+		} else {
+			ecsPrefix = prefix
+		}
+	}
+
+	if ecsPrefix.IsValid() {
+		log.Debugln("DNS [%s] config with ecs: %s", c.Address(), ecsPrefix)
+		if params["ecs-override"] == "true" {
+			ecsOverride = true
+		}
+		return clientWithEdns0Subnet{c, ecsPrefix, ecsOverride}
+	}
+	return c
 }
 
 func handleMsgWithEmptyAnswer(r *D.Msg) *D.Msg {
@@ -206,19 +288,24 @@ func handleMsgWithEmptyAnswer(r *D.Msg) *D.Msg {
 	return msg
 }
 
-func msgToIP(msg *D.Msg) []netip.Addr {
-	ips := []netip.Addr{}
-
+func msgToIP(msg *D.Msg) (ips []netip.Addr) {
 	for _, answer := range msg.Answer {
+		var ip netip.Addr
 		switch ans := answer.(type) {
 		case *D.AAAA:
-			ips = append(ips, nnip.IpToAddr(ans.AAAA))
+			ip, _ = netip.AddrFromSlice(ans.AAAA)
 		case *D.A:
-			ips = append(ips, nnip.IpToAddr(ans.A))
+			ip, _ = netip.AddrFromSlice(ans.A)
+		default:
+			continue
 		}
+		if !ip.IsValid() {
+			continue
+		}
+		ip = ip.Unmap()
+		ips = append(ips, ip)
 	}
-
-	return ips
+	return
 }
 
 func msgToDomain(msg *D.Msg) string {
@@ -229,118 +316,87 @@ func msgToDomain(msg *D.Msg) string {
 	return ""
 }
 
-type dialHandler func(ctx context.Context, network, addr string) (net.Conn, error)
-
-func getDialHandler(r *Resolver, proxyAdapter C.ProxyAdapter, proxyName string, opts ...dialer.Option) dialHandler {
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if len(proxyName) == 0 && proxyAdapter == nil {
-			opts = append(opts, dialer.WithResolver(r))
-			return dialer.DialContext(ctx, network, addr, opts...)
-		} else {
-			host, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
-			}
-			uintPort, err := strconv.ParseUint(port, 10, 16)
-			if err != nil {
-				return nil, err
-			}
-			if proxyAdapter == nil {
-				var ok bool
-				proxyAdapter, ok = tunnel.Proxies()[proxyName]
-				if !ok {
-					opts = append(opts, dialer.WithInterface(proxyName))
-				}
-			}
-
-			if strings.Contains(network, "tcp") {
-				// tcp can resolve host by remote
-				metadata := &C.Metadata{
-					NetWork: C.TCP,
-					Host:    host,
-					DstPort: uint16(uintPort),
-				}
-				if proxyAdapter != nil {
-					if proxyAdapter.IsL3Protocol(metadata) { // L3 proxy should resolve domain before to avoid loopback
-						dstIP, err := resolver.ResolveIPWithResolver(ctx, host, r)
-						if err != nil {
-							return nil, err
-						}
-						metadata.Host = ""
-						metadata.DstIP = dstIP
-					}
-					return proxyAdapter.DialContext(ctx, metadata, opts...)
-				}
-				opts = append(opts, dialer.WithResolver(r))
-				return dialer.DialContext(ctx, network, addr, opts...)
-			} else {
-				// udp must resolve host first
-				dstIP, err := resolver.ResolveIPWithResolver(ctx, host, r)
-				if err != nil {
-					return nil, err
-				}
-				metadata := &C.Metadata{
-					NetWork: C.UDP,
-					Host:    "",
-					DstIP:   dstIP,
-					DstPort: uint16(uintPort),
-				}
-				if proxyAdapter == nil {
-					return dialer.DialContext(ctx, network, addr, opts...)
-				}
-
-				if !proxyAdapter.SupportUDP() {
-					return nil, fmt.Errorf("proxy adapter [%s] UDP is not supported", proxyAdapter)
-				}
-
-				packetConn, err := proxyAdapter.ListenPacketContext(ctx, metadata, opts...)
-				if err != nil {
-					return nil, err
-				}
-
-				return N.NewBindPacketConn(packetConn, metadata.UDPAddr()), nil
-			}
-		}
+func msgToQtype(msg *D.Msg) (uint16, string) {
+	if len(msg.Question) > 0 {
+		qType := msg.Question[0].Qtype
+		return qType, D.Type(qType).String()
 	}
+	return 0, ""
 }
 
-func listenPacket(ctx context.Context, proxyAdapter C.ProxyAdapter, proxyName string, network string, addr string, r *Resolver, opts ...dialer.Option) (net.PacketConn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	uintPort, err := strconv.ParseUint(port, 10, 16)
-	if err != nil {
-		return nil, err
-	}
-	if proxyAdapter == nil {
-		var ok bool
-		proxyAdapter, ok = tunnel.Proxies()[proxyName]
-		if !ok {
-			opts = append(opts, dialer.WithInterface(proxyName))
+func msgToHTTPSRRInfo(msg *D.Msg) string {
+	var alpns []string
+	var publicName string
+	var hasIPv4, hasIPv6 bool
+
+	collect := func(rrs []D.RR) {
+		for _, rr := range rrs {
+			httpsRR, ok := rr.(*D.HTTPS)
+			if !ok {
+				continue
+			}
+
+			for _, kv := range httpsRR.Value {
+				switch v := kv.(type) {
+				case *D.SVCBAlpn:
+					if len(alpns) == 0 && len(v.Alpn) > 0 {
+						alpns = append(alpns, v.Alpn...)
+					}
+				case *D.SVCBIPv4Hint:
+					if len(v.Hint) > 0 {
+						hasIPv4 = true
+					}
+				case *D.SVCBIPv6Hint:
+					if len(v.Hint) > 0 {
+						hasIPv6 = true
+					}
+				case *D.SVCBECHConfig:
+					if publicName == "" && len(v.ECH) > 0 {
+						if cfgs, err := echparser.ParseECHConfigList(v.ECH); err == nil && len(cfgs) > 0 {
+							publicName = string(cfgs[0].PublicName)
+						}
+					}
+				}
+			}
 		}
 	}
 
-	// udp must resolve host first
-	dstIP, err := resolver.ResolveIPWithResolver(ctx, host, r)
-	if err != nil {
-		return nil, err
-	}
-	metadata := &C.Metadata{
-		NetWork: C.UDP,
-		Host:    "",
-		DstIP:   dstIP,
-		DstPort: uint16(uintPort),
-	}
-	if proxyAdapter == nil {
-		return dialer.NewDialer(opts...).ListenPacket(ctx, network, "", netip.AddrPortFrom(metadata.DstIP, metadata.DstPort))
+	collect(msg.Answer)
+
+	//TODO: Do we need to process the data in msg.Extra?
+	//      If so, do we need to validate whether the domain names within it match our request?
+	//      To simplify the problem, let's ignore it for now.
+	//collect(msg.Extra)
+
+	if len(alpns) == 0 && publicName == "" && !hasIPv4 && !hasIPv6 {
+		return ""
 	}
 
-	if !proxyAdapter.SupportUDP() {
-		return nil, fmt.Errorf("proxy adapter [%s] UDP is not supported", proxyAdapter)
+	var parts []string
+	if len(alpns) > 0 {
+		parts = append(parts, "alpn:"+strings.Join(alpns, ","))
+	}
+	if publicName != "" {
+		parts = append(parts, "pn:"+publicName)
+	}
+	if hasIPv4 {
+		parts = append(parts, "ipv4hint")
+	}
+	if hasIPv6 {
+		parts = append(parts, "ipv6hint")
 	}
 
-	return proxyAdapter.ListenPacketContext(ctx, metadata, opts...)
+	return strings.Join(parts, ";")
+}
+
+func msgToLogString(msg *D.Msg) string {
+	qType, qTypeStr := msgToQtype(msg)
+	switch qType {
+	case D.TypeHTTPS:
+		return fmt.Sprintf("[%s] %s", msgToHTTPSRRInfo(msg), qTypeStr)
+	default:
+		return fmt.Sprintf("%s %s", msgToIP(msg), qTypeStr)
+	}
 }
 
 func batchExchange(ctx context.Context, clients []dnsClient, m *D.Msg) (msg *D.Msg, cache bool, err error) {
@@ -348,7 +404,7 @@ func batchExchange(ctx context.Context, clients []dnsClient, m *D.Msg) (msg *D.M
 	fast, ctx := picker.WithTimeout[*D.Msg](ctx, resolver.DefaultDNSTimeout)
 	defer fast.Close()
 	domain := msgToDomain(m)
-	var noIpMsg *D.Msg
+	_, qTypeStr := msgToQtype(m)
 	for _, client := range clients {
 		if _, isRCodeClient := client.(rcodeClient); isRCodeClient {
 			msg, err = client.ExchangeContext(ctx, m)
@@ -356,7 +412,7 @@ func batchExchange(ctx context.Context, clients []dnsClient, m *D.Msg) (msg *D.M
 		}
 		client := client // shadow define client to ensure the value captured by the closure will not be changed in the next loop
 		fast.Go(func() (*D.Msg, error) {
-			// log.Debugln("[DNS] resolve %s from %s", domain, client.Address())
+			log.Debugln("[DNS] resolve %s from %s", domain, client.Address())
 			m, err := client.ExchangeContext(ctx, m)
 			if err != nil {
 				return nil, err
@@ -367,8 +423,7 @@ func batchExchange(ctx context.Context, clients []dnsClient, m *D.Msg) (msg *D.M
 			}
 			if ips := msgToIP(m); len(m.Question) > 0 {
 				qType := m.Question[0].Qtype
-				// log.Debugln("[DNS] %s --> %s %s from %s", domain, ips, D.Type(qType), client.Address())
-				_ = domain
+				log.Debugln("[DNS] %s --> %s %s from %s", domain, ips, D.Type(qType), client.Address())
 				switch qType {
 				case D.TypeAAAA:
 					if len(ips) == 0 {
@@ -388,9 +443,6 @@ func batchExchange(ctx context.Context, clients []dnsClient, m *D.Msg) (msg *D.M
 
 	msg = fast.Wait()
 	if msg == nil {
-		if noIpMsg != nil {
-			return noIpMsg, false, nil
-		}
 		err = errors.New("all DNS requests failed")
 		if fErr := fast.Error(); fErr != nil {
 			err = fmt.Errorf("%w, first error: %w", err, fErr)

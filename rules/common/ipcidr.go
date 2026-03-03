@@ -21,7 +21,7 @@ func WithIPCIDRNoResolve(noResolve bool) IPCIDROption {
 }
 
 type IPCIDR struct {
-	*Base
+	Base
 	ipnet       netip.Prefix
 	adapter     string
 	isSourceIP  bool
@@ -35,12 +35,16 @@ func (i *IPCIDR) RuleType() C.RuleType {
 	return C.IPCIDR
 }
 
-func (i *IPCIDR) Match(metadata *C.Metadata) (bool, string) {
+func (i *IPCIDR) Match(metadata *C.Metadata, helper C.RuleMatchHelper) (bool, string) {
+	if !i.noResolveIP && !i.isSourceIP && helper.ResolveIP != nil {
+		helper.ResolveIP()
+	}
+
 	ip := metadata.DstIP
 	if i.isSourceIP {
 		ip = metadata.SrcIP
 	}
-	return ip.IsValid() && i.ipnet.Contains(ip), i.adapter
+	return ip.IsValid() && i.ipnet.Contains(ip.WithZone("")), i.adapter
 }
 
 func (i *IPCIDR) Adapter() string {
@@ -51,10 +55,6 @@ func (i *IPCIDR) Payload() string {
 	return i.ipnet.String()
 }
 
-func (i *IPCIDR) ShouldResolveIP() bool {
-	return !i.noResolveIP
-}
-
 func NewIPCIDR(s string, adapter string, opts ...IPCIDROption) (*IPCIDR, error) {
 	ipnet, err := netip.ParsePrefix(s)
 	if err != nil {
@@ -62,7 +62,7 @@ func NewIPCIDR(s string, adapter string, opts ...IPCIDROption) (*IPCIDR, error) 
 	}
 
 	ipcidr := &IPCIDR{
-		Base:    &Base{},
+		Base:    Base{},
 		ipnet:   ipnet,
 		adapter: adapter,
 	}
@@ -74,4 +74,4 @@ func NewIPCIDR(s string, adapter string, opts ...IPCIDROption) (*IPCIDR, error) 
 	return ipcidr, nil
 }
 
-//var _ C.Rule = (*IPCIDR)(nil)
+var _ C.Rule = (*IPCIDR)(nil)

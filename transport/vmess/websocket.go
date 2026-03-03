@@ -4,15 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha1"
-	"crypto/tls"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -20,12 +18,15 @@ import (
 
 	"github.com/metacubex/mihomo/common/buf"
 	N "github.com/metacubex/mihomo/common/net"
+	"github.com/metacubex/mihomo/component/ech"
 	tlsC "github.com/metacubex/mihomo/component/tls"
 	"github.com/metacubex/mihomo/log"
 
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
-	"github.com/zhangyunhao116/fastrand"
+	"github.com/metacubex/http"
+	"github.com/metacubex/randv2"
+	"github.com/metacubex/tls"
 )
 
 type websocketConn struct {
@@ -41,7 +42,6 @@ type websocketWithEarlyDataConn struct {
 	net.Conn
 	wsWriter N.ExtendedWriter
 	underlay net.Conn
-	closed   bool
 	dialed   chan bool
 	cancel   context.CancelFunc
 	ctx      context.Context
@@ -55,6 +55,7 @@ type WebsocketConfig struct {
 	Headers                  http.Header
 	TLS                      bool
 	TLSConfig                *tls.Config
+	ECHConfig                *ech.Config
 	MaxEarlyData             int
 	EarlyDataHeaderName      string
 	ClientFingerprint        string
@@ -150,7 +151,7 @@ func (wsc *websocketConn) WriteBuffer(buffer *buf.Buffer) error {
 	}
 
 	if wsc.state.ClientSide() {
-		maskKey := fastrand.Uint32()
+		maskKey := randv2.Uint32()
 		binary.LittleEndian.PutUint32(header[1+payloadBitLength:], maskKey)
 		N.MaskWebSocket(maskKey, data)
 	}
@@ -202,7 +203,7 @@ func (wsedc *websocketWithEarlyDataConn) Dial(earlyData []byte) error {
 }
 
 func (wsedc *websocketWithEarlyDataConn) Write(b []byte) (int, error) {
-	if wsedc.closed {
+	if wsedc.ctx.Err() != nil {
 		return 0, io.ErrClosedPipe
 	}
 	if wsedc.Conn == nil {
@@ -216,7 +217,7 @@ func (wsedc *websocketWithEarlyDataConn) Write(b []byte) (int, error) {
 }
 
 func (wsedc *websocketWithEarlyDataConn) WriteBuffer(buffer *buf.Buffer) error {
-	if wsedc.closed {
+	if wsedc.ctx.Err() != nil {
 		return io.ErrClosedPipe
 	}
 	if wsedc.Conn == nil {
@@ -230,7 +231,7 @@ func (wsedc *websocketWithEarlyDataConn) WriteBuffer(buffer *buf.Buffer) error {
 }
 
 func (wsedc *websocketWithEarlyDataConn) Read(b []byte) (int, error) {
-	if wsedc.closed {
+	if wsedc.ctx.Err() != nil {
 		return 0, io.ErrClosedPipe
 	}
 	if wsedc.Conn == nil {
@@ -244,10 +245,9 @@ func (wsedc *websocketWithEarlyDataConn) Read(b []byte) (int, error) {
 }
 
 func (wsedc *websocketWithEarlyDataConn) Close() error {
-	wsedc.closed = true
 	wsedc.cancel()
-	if wsedc.Conn == nil {
-		return nil
+	if wsedc.Conn == nil { // is dialing or not dialed
+		return wsedc.underlay.Close()
 	}
 	return wsedc.Conn.Close()
 }
@@ -325,7 +325,7 @@ func streamWebsocketWithEarlyDataConn(conn net.Conn, c *WebsocketConfig) (net.Co
 	return N.NewDeadlineConn(conn), nil
 }
 
-func streamWebsocketConn(ctx context.Context, conn net.Conn, c *WebsocketConfig, earlyData *bytes.Buffer) (net.Conn, error) {
+func streamWebsocketConn(ctx context.Context, conn net.Conn, c *WebsocketConfig, earlyData *bytes.Buffer) (_ net.Conn, err error) {
 	u, err := url.Parse(c.Path)
 	if err != nil {
 		return nil, fmt.Errorf("parse url %s error: %w", c.Path, err)
@@ -350,27 +350,35 @@ func streamWebsocketConn(ctx context.Context, conn net.Conn, c *WebsocketConfig,
 		}
 		if config.ServerName == "" && !config.InsecureSkipVerify { // users must set either ServerName or InsecureSkipVerify in the config.
 			config = config.Clone()
-			config.ServerName = uri.Host
+			config.ServerName = c.Host
 		}
 
-		if len(c.ClientFingerprint) != 0 {
-			if fingerprint, exists := tlsC.GetFingerprint(c.ClientFingerprint); exists {
-				utlsConn := tlsC.UClient(conn, config, fingerprint)
-				if err = utlsConn.BuildWebsocketHandshakeState(); err != nil {
-					return nil, fmt.Errorf("parse url %s error: %w", c.Path, err)
-				}
-				conn = utlsConn
-			}
-		} else {
-			conn = tls.Client(conn, config)
-		}
-
-		if tlsConn, ok := conn.(interface {
-			HandshakeContext(ctx context.Context) error
-		}); ok {
-			if err = tlsConn.HandshakeContext(ctx); err != nil {
+		if clientFingerprint, ok := tlsC.GetFingerprint(c.ClientFingerprint); ok {
+			tlsConfig := tlsC.UConfig(config)
+			err = c.ECHConfig.ClientHandleUTLS(ctx, tlsConfig)
+			if err != nil {
 				return nil, err
 			}
+			tlsConn := tlsC.UClient(conn, tlsConfig, clientFingerprint)
+			if err = tlsC.BuildWebsocketHandshakeState(tlsConn); err != nil {
+				return nil, fmt.Errorf("parse url %s error: %w", c.Path, err)
+			}
+			err = tlsConn.HandshakeContext(ctx)
+			if err != nil {
+				return nil, err
+			}
+			conn = tlsConn
+		} else {
+			err = c.ECHConfig.ClientHandle(ctx, config)
+			if err != nil {
+				return nil, err
+			}
+			tlsConn := tls.Client(conn, config)
+			err = tlsConn.HandshakeContext(ctx)
+			if err != nil {
+				return nil, err
+			}
+			conn = tlsConn
 		}
 	}
 
@@ -398,7 +406,7 @@ func streamWebsocketConn(ctx context.Context, conn net.Conn, c *WebsocketConfig,
 		const nonceKeySize = 16
 		// NOTE: bts does not escape.
 		bts := make([]byte, nonceKeySize)
-		if _, err = fastrand.Read(bts); err != nil {
+		if _, err = rand.Read(bts); err != nil {
 			return nil, fmt.Errorf("rand read error: %w", err)
 		}
 		secKey = base64.StdEncoding.EncodeToString(bts)
@@ -461,25 +469,15 @@ func streamWebsocketConn(ctx context.Context, conn net.Conn, c *WebsocketConfig,
 		if lenSecAccept := len(secAccept); lenSecAccept != acceptSize {
 			return nil, fmt.Errorf("unexpected Sec-Websocket-Accept length: %d", lenSecAccept)
 		}
-		if getSecAccept(secKey) != secAccept {
+		if N.GetWebSocketSecAccept(secKey) != secAccept {
 			return nil, errors.New("unexpected Sec-Websocket-Accept")
 		}
 	}
 
-	conn = newWebsocketConn(conn, ws.StateClientSide)
+	conn = newWebsocketConn(bufferedConn, ws.StateClientSide)
 	// websocketConn can't correct handle ReadDeadline
 	// so call N.NewDeadlineConn to add a safe wrapper
 	return N.NewDeadlineConn(conn), nil
-}
-
-func getSecAccept(secKey string) string {
-	const magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-	const nonceSize = 24 // base64.StdEncoding.EncodedLen(nonceKeySize)
-	p := make([]byte, nonceSize+len(magic))
-	copy(p[:nonceSize], secKey)
-	copy(p[nonceSize:], magic)
-	sum := sha1.Sum(p)
-	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
 func StreamWebsocketConn(ctx context.Context, conn net.Conn, c *WebsocketConfig) (net.Conn, error) {
@@ -551,10 +549,10 @@ func StreamUpgradedWebsocketConn(w http.ResponseWriter, r *http.Request) (net.Co
 	w.Header().Set("Connection", "upgrade")
 	w.Header().Set("Upgrade", "websocket")
 	if !isRaw {
-		w.Header().Set("Sec-Websocket-Accept", getSecAccept(r.Header.Get("Sec-WebSocket-Key")))
+		w.Header().Set("Sec-Websocket-Accept", N.GetWebSocketSecAccept(r.Header.Get("Sec-WebSocket-Key")))
 	}
 	w.WriteHeader(http.StatusSwitchingProtocols)
-	if flusher, isFlusher := w.(interface{ FlushError() error }); isFlusher {
+	if flusher, isFlusher := w.(interface{ FlushError() error }); isFlusher && writeHeaderShouldFlush {
 		err = flusher.FlushError()
 		if err != nil {
 			return nil, fmt.Errorf("flush response: %w", err)

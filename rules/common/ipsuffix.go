@@ -1,12 +1,13 @@
 package common
 
 import (
-	C "github.com/metacubex/mihomo/constant"
 	"net/netip"
+
+	C "github.com/metacubex/mihomo/constant"
 )
 
 type IPSuffix struct {
-	*Base
+	Base
 	ipBytes     []byte
 	bits        int
 	payload     string
@@ -22,7 +23,11 @@ func (is *IPSuffix) RuleType() C.RuleType {
 	return C.IPSuffix
 }
 
-func (is *IPSuffix) Match(metadata *C.Metadata) (bool, string) {
+func (is *IPSuffix) Match(metadata *C.Metadata, helper C.RuleMatchHelper) (bool, string) {
+	if !is.noResolveIP && !is.isSourceIP && helper.ResolveIP != nil {
+		helper.ResolveIP()
+	}
+
 	ip := metadata.DstIP
 	if is.isSourceIP {
 		ip = metadata.SrcIP
@@ -57,10 +62,6 @@ func (is *IPSuffix) Payload() string {
 	return is.payload
 }
 
-func (is *IPSuffix) ShouldResolveIP() bool {
-	return !is.noResolveIP
-}
-
 func NewIPSuffix(payload, adapter string, isSrc, noResolveIP bool) (*IPSuffix, error) {
 	ipnet, err := netip.ParsePrefix(payload)
 	if err != nil {
@@ -68,7 +69,7 @@ func NewIPSuffix(payload, adapter string, isSrc, noResolveIP bool) (*IPSuffix, e
 	}
 
 	return &IPSuffix{
-		Base:        &Base{},
+		Base:        Base{},
 		payload:     payload,
 		ipBytes:     ipnet.Addr().AsSlice(),
 		bits:        ipnet.Bits(),
@@ -77,3 +78,5 @@ func NewIPSuffix(payload, adapter string, isSrc, noResolveIP bool) (*IPSuffix, e
 		noResolveIP: noResolveIP,
 	}, nil
 }
+
+var _ C.Rule = (*IPSuffix)(nil)

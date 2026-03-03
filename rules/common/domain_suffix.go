@@ -7,7 +7,7 @@ import (
 )
 
 type DomainSuffix struct {
-	*Base
+	Base
 	suffix  string
 	adapter string
 }
@@ -16,7 +16,7 @@ func (ds *DomainSuffix) RuleType() C.RuleType {
 	return C.DomainSuffix
 }
 
-func (ds *DomainSuffix) Match(metadata *C.Metadata) (bool, string) {
+func (ds *DomainSuffix) Match(metadata *C.Metadata, helper C.RuleMatchHelper) (bool, string) {
 	domainLower := strings.ToLower(metadata.RuleHost())
 	return strings.HasSuffix(domainLower, "."+ds.suffix) || domainLower == ds.suffix, ds.adapter
 }
@@ -31,10 +31,10 @@ func (ds *DomainSuffix) Payload() string {
 
 func NewDomainSuffix(suffix string, adapter string) *DomainSuffix {
 	return &DomainSuffix{
-		Base:    &Base{},
+		Base:    Base{},
 		suffix:  strings.ToLower(suffix),
 		adapter: adapter,
 	}
 }
 
-//var _ C.Rule = (*DomainSuffix)(nil)
+var _ C.Rule = (*DomainSuffix)(nil)

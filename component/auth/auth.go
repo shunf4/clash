@@ -5,6 +5,11 @@ type Authenticator interface {
 	Users() []string
 }
 
+type AuthStore interface {
+	Authenticator() Authenticator
+	SetAuthenticator(Authenticator)
+}
+
 type AuthUser struct {
 	User string
 	Pass string
@@ -36,3 +41,11 @@ func NewAuthenticator(users []AuthUser) Authenticator {
 	}
 	return au
 }
+
+var AlwaysValid Authenticator = alwaysValid{}
+
+type alwaysValid struct{}
+
+func (alwaysValid) Verify(string, string) bool { return true }
+
+func (alwaysValid) Users() []string { return nil }

@@ -4,16 +4,17 @@ import (
 	"context"
 	"errors"
 	"net"
-	"net/http"
 	"time"
 
 	"github.com/metacubex/mihomo/adapter/inbound"
 	N "github.com/metacubex/mihomo/common/net"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/socks5"
+
+	"github.com/metacubex/http"
 )
 
-func newClient(srcConn net.Conn, tunnel C.Tunnel, additions ...inbound.Addition) *http.Client {
+func newClient(srcConn net.Conn, tunnel C.Tunnel, additions []inbound.Addition) *http.Client { // additions using slice let caller can change its value (without size) after newClient return
 	return &http.Client{
 		Transport: &http.Transport{
 			// from http.DefaultTransport
@@ -22,6 +23,7 @@ func newClient(srcConn net.Conn, tunnel C.Tunnel, additions ...inbound.Addition)
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: 0,
 			ExpectContinueTimeout: 0,
+			DisableCompression:    true, // prevents the Transport add "Accept-Encoding: gzip"
 			DialContext: func(context context.Context, network, address string) (net.Conn, error) {
 				if network != "tcp" && network != "tcp4" && network != "tcp6" {
 					return nil, errors.New("unsupported network " + network)

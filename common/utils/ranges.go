@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -20,6 +21,8 @@ func newIntRanges[T constraints.Integer](expected string, parseFn func(string) (
 		return nil, nil
 	}
 
+	// support: 200,302 or 200,204,401-429,501-503
+	expected = strings.ReplaceAll(expected, ",", "/")
 	list := strings.Split(expected, "/")
 	if len(list) > 28 {
 		return nil, fmt.Errorf("%w, too many ranges to use, maximum support 28 ranges", errIntRanges)
@@ -47,9 +50,9 @@ func newIntRangesFromList[T constraints.Integer](list []string, parseFn func(str
 		}
 
 		switch statusLen {
-		case 1:
+		case 1: // Port range
 			ranges = append(ranges, NewRange(T(start), T(start)))
-		case 2:
+		case 2: // Single port
 			end, err := parseFn(strings.Trim(status[1], "[ ]"))
 			if err != nil {
 				return nil, errIntRanges
@@ -108,7 +111,7 @@ func (ranges IntRanges[T]) Check(status T) bool {
 	return false
 }
 
-func (ranges IntRanges[T]) ToString() string {
+func (ranges IntRanges[T]) String() string {
 	if len(ranges) == 0 {
 		return "*"
 	}
@@ -129,4 +132,42 @@ func (ranges IntRanges[T]) ToString() string {
 	}
 
 	return strings.Join(terms, "/")
+}
+
+func (ranges IntRanges[T]) Range(f func(t T) bool) {
+	if len(ranges) == 0 {
+		return
+	}
+
+	for _, r := range ranges {
+		for i := r.Start(); i <= r.End() && i >= r.Start(); i++ {
+			if !f(i) {
+				return
+			}
+			if i+1 < i { // integer overflow
+				break
+			}
+		}
+	}
+}
+
+func (ranges IntRanges[T]) Merge() (mergedRanges IntRanges[T]) {
+	if len(ranges) == 0 {
+		return
+	}
+	sort.Slice(ranges, func(i, j int) bool {
+		return ranges[i].Start() < ranges[j].Start()
+	})
+	mergedRanges = ranges[:1]
+	var rangeIndex int
+	for _, r := range ranges[1:] {
+		if mergedRanges[rangeIndex].End()+1 > mergedRanges[rangeIndex].End() && // integer overflow
+			r.Start() > mergedRanges[rangeIndex].End()+1 {
+			mergedRanges = append(mergedRanges, r)
+			rangeIndex++
+		} else if r.End() > mergedRanges[rangeIndex].End() {
+			mergedRanges[rangeIndex].end = r.End()
+		}
+	}
+	return
 }

@@ -8,8 +8,8 @@ import (
 	"net/netip"
 	"strconv"
 
+	"github.com/metacubex/blake3"
 	"github.com/metacubex/quic-go"
-	"lukechampine.com/blake3"
 
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/socks5"
@@ -444,13 +444,13 @@ func NewAddress(metadata *C.Metadata) Address {
 	var addrType byte
 	var addr []byte
 	switch metadata.AddrType() {
-	case socks5.AtypIPv4:
+	case C.AtypIPv4:
 		addrType = AtypIPv4
 		addr = metadata.DstIP.AsSlice()
-	case socks5.AtypIPv6:
+	case C.AtypIPv6:
 		addrType = AtypIPv6
 		addr = metadata.DstIP.AsSlice()
-	case socks5.AtypDomainName:
+	case C.AtypDomainName:
 		addrType = AtypDomainName
 		addr = make([]byte, len(metadata.Host)+1)
 		addr[0] = byte(len(metadata.Host))

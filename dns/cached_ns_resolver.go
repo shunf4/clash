@@ -40,6 +40,8 @@ type dnsClientResult struct {
 	err error
 }
 
+func (cnc *cachedNameserversClient) ResetConnection() {}
+
 func (cnc *cachedNameserversClient) ExchangeContext(ctx context.Context, m *D.Msg) (msg *D.Msg, err error) {
 	var ip net.IP
 

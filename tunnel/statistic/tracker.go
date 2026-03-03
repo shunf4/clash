@@ -3,7 +3,6 @@ package statistic
 import (
 	"io"
 	"net"
-	"net/netip"
 	"time"
 
 	"github.com/metacubex/mihomo/common/atomic"
@@ -29,6 +28,7 @@ type TrackerInfo struct {
 	DownloadTotal atomic.Int64 `json:"download"`
 	Start         time.Time    `json:"start"`
 	Chain         C.Chain      `json:"chains"`
+	ProviderChain C.Chain      `json:"providerChains"`
 	Rule          string       `json:"rule"`
 	RulePayload   string       `json:"rulePayload"`
 }
@@ -116,25 +116,8 @@ func (tt *tcpTracker) Upstream() any {
 	return tt.Conn
 }
 
-func parseRemoteDestination(addr net.Addr, conn C.Connection) string {
-	if addr == nil && conn != nil {
-		return conn.RemoteDestination()
-	}
-	if addrPort, err := netip.ParseAddrPort(addr.String()); err == nil && addrPort.Addr().IsValid() {
-		return addrPort.Addr().String()
-	} else {
-		if conn != nil {
-			return conn.RemoteDestination()
-		} else {
-			return ""
-		}
-	}
-}
-
 func NewTCPTracker(conn C.Conn, manager *Manager, metadata *C.Metadata, rule C.Rule, uploadTotal int64, downloadTotal int64, pushToManager bool) *tcpTracker {
-	if conn != nil {
-		metadata.RemoteDst = parseRemoteDestination(conn.RemoteAddr(), conn)
-	}
+	metadata.RemoteDst = conn.RemoteDestination()
 
 	t := &tcpTracker{
 		Conn:    conn,
@@ -144,6 +127,7 @@ func NewTCPTracker(conn C.Conn, manager *Manager, metadata *C.Metadata, rule C.R
 			Start:         time.Now(),
 			Metadata:      metadata,
 			Chain:         conn.Chains(),
+			ProviderChain: conn.ProviderChains(),
 			Rule:          "",
 			UploadTotal:   atomic.NewInt64(uploadTotal),
 			DownloadTotal: atomic.NewInt64(downloadTotal),
@@ -225,7 +209,7 @@ func (ut *udpTracker) Upstream() any {
 }
 
 func NewUDPTracker(conn C.PacketConn, manager *Manager, metadata *C.Metadata, rule C.Rule, uploadTotal int64, downloadTotal int64, pushToManager bool) *udpTracker {
-	metadata.RemoteDst = parseRemoteDestination(nil, conn)
+	metadata.RemoteDst = conn.RemoteDestination()
 
 	ut := &udpTracker{
 		PacketConn: conn,
@@ -235,6 +219,7 @@ func NewUDPTracker(conn C.PacketConn, manager *Manager, metadata *C.Metadata, ru
 			Start:         time.Now(),
 			Metadata:      metadata,
 			Chain:         conn.Chains(),
+			ProviderChain: conn.ProviderChains(),
 			Rule:          "",
 			UploadTotal:   atomic.NewInt64(uploadTotal),
 			DownloadTotal: atomic.NewInt64(downloadTotal),

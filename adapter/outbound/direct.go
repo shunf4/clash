@@ -2,19 +2,17 @@ package outbound
 
 import (
 	"context"
-	"errors"
-	"net/netip"
+	"fmt"
 
-	N "github.com/metacubex/mihomo/common/net"
 	"github.com/metacubex/mihomo/component/dialer"
+	"github.com/metacubex/mihomo/component/loopback"
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
-	"github.com/metacubex/mihomo/log"
 )
 
 type Direct struct {
 	*Base
-	loopBack *loopBackDetector
+	loopBack *loopback.Detector
 }
 
 type DirectOption struct {
@@ -23,37 +21,47 @@ type DirectOption struct {
 }
 
 // DialContext implements C.ProxyAdapter
-func (d *Direct) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.Conn, error) {
-	if d.loopBack.CheckConn(metadata.SourceAddrPort()) {
-		log.Warnln("detected loopback connection from: %s (previous-local) to: %s", metadata.SourceAddrPort(), metadata.RemoteAddress())
+func (d *Direct) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
+	if err := d.loopBack.CheckConn(metadata); err != nil {
+		return nil, err
 	}
-	opts = append(opts, dialer.WithResolver(resolver.DefaultResolver))
-	c, err := dialer.DialContext(ctx, "tcp", metadata.RemoteAddress(), d.Base.DialOptions(opts...)...)
+	opts := d.DialOptions()
+	opts = append(opts, dialer.WithResolver(resolver.DirectHostResolver))
+	c, err := dialer.DialContext(ctx, "tcp", metadata.RemoteAddress(), opts...)
 	if err != nil {
 		return nil, err
 	}
-	N.TCPKeepAlive(c)
 	return d.loopBack.NewConn(NewConn(c, d)), nil
 }
 
 // ListenPacketContext implements C.ProxyAdapter
-func (d *Direct) ListenPacketContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.PacketConn, error) {
-	if d.loopBack.CheckPacketConn(metadata.SourceAddrPort()) {
-		log.Warnln("detected loopback connection from: %s (previous-local) to: %s", metadata.SourceAddrPort(), metadata.RemoteAddress())
+func (d *Direct) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (C.PacketConn, error) {
+	if err := d.loopBack.CheckPacketConn(metadata); err != nil {
+		return nil, err
 	}
-	// net.UDPConn.WriteTo only working with *net.UDPAddr, so we need a net.UDPAddr
-	if !metadata.Resolved() {
-		ip, err := resolver.ResolveIPWithResolver(ctx, metadata.Host, resolver.DefaultResolver)
-		if err != nil {
-			return nil, errors.New("can't resolve ip")
-		}
-		metadata.DstIP = ip
+	if err := d.ResolveUDP(ctx, metadata); err != nil {
+		return nil, err
 	}
-	pc, err := dialer.NewDialer(d.Base.DialOptions(opts...)...).ListenPacket(ctx, "udp", "", netip.AddrPortFrom(metadata.DstIP, metadata.DstPort))
+	pc, err := dialer.NewDialer(d.DialOptions()...).ListenPacket(ctx, "udp", "", metadata.AddrPort())
 	if err != nil {
 		return nil, err
 	}
 	return d.loopBack.NewPacketConn(newPacketConn(pc, d)), nil
+}
+
+func (d *Direct) ResolveUDP(ctx context.Context, metadata *C.Metadata) error {
+	if (!metadata.Resolved() || resolver.DirectHostResolver != resolver.DefaultResolver) && metadata.Host != "" {
+		ip, err := resolver.ResolveIPWithResolver(ctx, metadata.Host, resolver.DirectHostResolver)
+		if err != nil {
+			return fmt.Errorf("can't resolve ip: %w", err)
+		}
+		metadata.DstIP = ip
+	}
+	return nil
+}
+
+func (d *Direct) IsL3Protocol(metadata *C.Metadata) bool {
+	return true // tell DNSDialer don't send domain to DialContext, avoid lookback to DefaultResolver
 }
 
 func NewDirectWithOption(option DirectOption) *Direct {
@@ -61,14 +69,15 @@ func NewDirectWithOption(option DirectOption) *Direct {
 		Base: &Base{
 			name:   option.Name,
 			tp:     C.Direct,
+			pdName: option.ProviderName,
 			udp:    true,
 			tfo:    option.TFO,
 			mpTcp:  option.MPTCP,
 			iface:  option.Interface,
 			rmark:  option.RoutingMark,
-			prefer: C.NewDNSPrefer(option.IPVersion),
+			prefer: option.IPVersion,
 		},
-		loopBack: newLoopBackDetector(),
+		loopBack: loopback.NewDetector(),
 	}
 }
 
@@ -80,7 +89,7 @@ func NewDirect() *Direct {
 			udp:    true,
 			prefer: C.DualStack,
 		},
-		loopBack: newLoopBackDetector(),
+		loopBack: loopback.NewDetector(),
 	}
 }
 
@@ -92,6 +101,6 @@ func NewCompatible() *Direct {
 			udp:    true,
 			prefer: C.DualStack,
 		},
-		loopBack: newLoopBackDetector(),
+		loopBack: loopback.NewDetector(),
 	}
 }
