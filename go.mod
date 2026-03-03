@@ -1,14 +1,19 @@
 module github.com/metacubex/mihomo
 
-go 1.20
+go 1.22
+
+toolchain go1.24.4
 
 require (
 	github.com/aohorodnyk/mimeheader v0.0.6
 	github.com/bahlo/generic-list-go v0.2.0
 	github.com/coreos/go-iptables v0.8.0
 	github.com/dlclark/regexp2 v1.11.5
-	github.com/flytam/filenamify v1.2.0
 	github.com/enfein/mieru/v3 v3.28.0
+	github.com/flytam/filenamify v1.2.0
+	github.com/go-chi/chi/v5 v5.2.5
+	github.com/go-chi/cors v1.2.2
+	github.com/go-chi/render v1.0.3
 	github.com/gobwas/ws v1.4.0
 	github.com/gofrs/uuid/v5 v5.4.0
 	github.com/golang/snappy v1.0.0

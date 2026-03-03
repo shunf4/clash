@@ -1851,8 +1851,8 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 }
 
 func parseListeners(cfg *RawConfig, filterExcludePorts []int) (listeners map[string]C.InboundListener, err error) {
-	L.ParseListenersStart()
-	defer L.ParseListenersEnd()
+	listener.ParseListenersStart()
+	defer listener.ParseListenersEnd()
 	listeners = make(map[string]C.InboundListener)
 	for index, mapping := range cfg.Listeners {
 
@@ -2022,7 +2022,7 @@ func parseHosts(cfg *RawConfig) (*trie.DomainTrie[resolver.HostValue], *trie.Dom
 		for domain, anyValue := range cfg.Hosts {
 			hosts, err := utils.ToStringSlice(anyValue)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if len(hosts) == 1 && hosts[0] == "lan" {
 				if addrs, err := net.InterfaceAddrs(); err != nil {
@@ -2077,24 +2077,6 @@ func hostWithDefaultPort(host string, defPort string) (string, error) {
 	}
 
 	return net.JoinHostPort(hostname, port), nil
-}
-
-func batchAddNameservers(nameservers []dns.NameServer, toBeAdded []string, logPrefix string) ([]dns.NameServer, error) {
-	for _, n := range toBeAdded {
-		addr, err := hostWithDefaultPort(n, "53")
-		if err != nil {
-			return nil, fmt.Errorf("%s: DNS Nameserver(%s) format error: %s", logPrefix, n, err.Error())
-		}
-		log.Infoln("%s: Added DNS Nameserver to built-in DNS: %s", logPrefix, addr)
-		nameservers = append(
-			nameservers,
-			dns.NameServer{
-				Net:  "", // UDP
-				Addr: addr,
-			},
-		)
-	}
-	return nameservers, nil
 }
 
 func batchAddNameservers(nameservers []dns.NameServer, toBeAdded []string, logPrefix string) ([]dns.NameServer, error) {

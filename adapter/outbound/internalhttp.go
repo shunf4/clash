@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/metacubex/mihomo/component/dialer"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/tunnel"
 )
@@ -15,7 +14,7 @@ type InternalHTTP struct {
 }
 
 // DialContext implements C.ProxyAdapter
-func (ih *InternalHTTP) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (_ C.Conn, err error) {
+func (ih *InternalHTTP) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
 	return ih.DialContextWithDialer(ctx, nil, metadata)
 }
 

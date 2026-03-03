@@ -412,7 +412,7 @@ func batchExchange(ctx context.Context, clients []dnsClient, m *D.Msg) (msg *D.M
 		}
 		client := client // shadow define client to ensure the value captured by the closure will not be changed in the next loop
 		fast.Go(func() (*D.Msg, error) {
-			log.Debugln("[DNS] resolve %s from %s", domain, client.Address())
+			log.Debugln("[DNS] resolve %s %s from %s", domain, qTypeStr, client.Address())
 			m, err := client.ExchangeContext(ctx, m)
 			if err != nil {
 				return nil, err
@@ -421,22 +421,7 @@ func batchExchange(ctx context.Context, clients []dnsClient, m *D.Msg) (msg *D.M
 				// so we would ignore RCode errors from RCode clients.
 				return nil, errors.New("server failure: " + D.RcodeToString[m.Rcode])
 			}
-			if ips := msgToIP(m); len(m.Question) > 0 {
-				qType := m.Question[0].Qtype
-				log.Debugln("[DNS] %s --> %s %s from %s", domain, ips, D.Type(qType), client.Address())
-				switch qType {
-				case D.TypeAAAA:
-					if len(ips) == 0 {
-						noIpMsg = m
-						return nil, resolver.ErrIPNotFound
-					}
-				case D.TypeA:
-					if len(ips) == 0 {
-						noIpMsg = m
-						return nil, resolver.ErrIPNotFound
-					}
-				}
-			}
+			log.Debugln("[DNS] %s --> %s from %s", domain, msgToLogString(m), client.Address())
 			return m, nil
 		})
 	}

@@ -1,9 +1,9 @@
-#!/bin/sh
+#!/bin/bash
 
-[ -r ~/.local/share/riv-include.source ] && source ~/.local/share/riv-include.source
+[ -r /etc/profile.d/01-kto-startup.source.sh ] && source /etc/profile.d/01-kto-startup.source.sh
 
-if [ "$IN_WINGCCENV" != "1" ] && [[ "$(type wingccenv | head -n 1)" = *" is a function" ]]; then
-	IN_WINGCCENV=1 wingccenv bash "$0" "$@"
+if [ "$IN_WINGCCENV" != "1" ] && [[ "$(type kto_wingccenv | head -n 1)" = *" is a function" ]]; then
+	IN_WINGCCENV=1 kto_wingccenv bash "$0" "$@"
 	exit "$?"
 fi
 
