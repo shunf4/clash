@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -344,7 +345,9 @@ func resolveMetadata(metadata *C.Metadata) (proxy C.Proxy, rule C.Rule, err erro
 			if !resolved && metadata.Host != "" && !metadata.Resolved() {
 				if node, ok := resolver.DefaultHosts.Search(metadata.Host, false); ok {
 					metadata.DstIP, _ = node.RandIP()
+					log.Debugln("[DNS] (lazy) ResolveIP by rule, resolved by hosts: %s --> %s", metadata.Host, metadata.DstIP.String())
 					resolved = true
+					return
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), resolver.DefaultDNSTimeout)
 				defer cancel()
@@ -646,6 +649,38 @@ func match(metadata *C.Metadata, helper C.RuleMatchHelper) (C.Proxy, C.Rule, err
 
 	for _, rule := range getRules(metadata) {
 		if matched, ada := rule.Match(metadata, helper); matched {
+			if strings.Contains(ada, ":::") {
+				overrideHost := ""
+				overridePort := int64(-1)
+				actionParts := strings.Split(ada, ":::")
+				if len(actionParts) >= 1 {
+					ada = actionParts[0]
+				}
+				if len(actionParts) >= 2 {
+					overrideHost = actionParts[1]
+				}
+				if len(actionParts) >= 3 {
+					var err error
+					overridePort, err = strconv.ParseInt(actionParts[2], 10, 32)
+					if err != nil || overridePort < 0 || overridePort >= 65536 {
+						overridePort = -1
+					}
+				}
+
+				if overrideHost != "" {
+					if ip, err := netip.ParseAddr(overrideHost); err == nil {
+						metadata.DstIP = ip
+						metadata.Host = ""
+					} else {
+						metadata.DstIP = netip.Addr{}
+						metadata.Host = overrideHost
+					}
+				}
+
+				if overridePort != -1 {
+					metadata.DstPort = uint16(overridePort)
+				}
+			}
 			adapter, ok := proxies[ada]
 			if !ok {
 				continue
