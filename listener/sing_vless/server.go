@@ -148,16 +148,20 @@ func New(config LC.VlessServer, tunnel C.Tunnel, additions ...inbound.Addition) 
 	}
 	if config.XHTTPConfig.Mode != "" {
 		switch config.XHTTPConfig.Mode {
-		case "auto":
+		case "auto", "stream-up", "stream-one", "packet-up":
 		default:
 			return nil, errors.New("unsupported xhttp mode")
 		}
 	}
 	if config.XHTTPConfig.Path != "" || config.XHTTPConfig.Host != "" || config.XHTTPConfig.Mode != "" {
 		httpServer.Handler = xhttp.NewServerHandler(xhttp.ServerOption{
-			Path: config.XHTTPConfig.Path,
-			Host: config.XHTTPConfig.Host,
-			Mode: config.XHTTPConfig.Mode,
+			Config: xhttp.Config{
+				Host:                 config.XHTTPConfig.Host,
+				Path:                 config.XHTTPConfig.Path,
+				Mode:                 config.XHTTPConfig.Mode,
+				NoSSEHeader:          config.XHTTPConfig.NoSSEHeader,
+				ScStreamUpServerSecs: config.XHTTPConfig.ScStreamUpServerSecs,
+			},
 			ConnHandler: func(conn net.Conn) {
 				sl.HandleConn(conn, tunnel, additions...)
 			},

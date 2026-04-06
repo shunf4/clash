@@ -1,17 +1,18 @@
 package xhttp
 
 import (
+	"errors"
 	"io"
 	"time"
 
-	"github.com/metacubex/mihomo/transport/gun"
+	"github.com/metacubex/mihomo/common/httputils"
 )
 
 type Conn struct {
 	writer  io.WriteCloser
 	reader  io.ReadCloser
 	onClose func()
-	gun.NetAddr
+	httputils.NetAddr
 
 	// deadlines
 	deadline *time.Timer
@@ -26,19 +27,12 @@ func (c *Conn) Read(b []byte) (int, error) {
 }
 
 func (c *Conn) Close() error {
+	err := c.writer.Close()
+	err2 := c.reader.Close()
 	if c.onClose != nil {
 		c.onClose()
 	}
-
-	err := c.writer.Close()
-	err2 := c.reader.Close()
-	if err != nil {
-		return err
-	}
-	if err2 != nil {
-		return err2
-	}
-	return nil
+	return errors.Join(err, err2)
 }
 
 func (c *Conn) SetReadDeadline(t time.Time) error  { return c.SetDeadline(t) }
