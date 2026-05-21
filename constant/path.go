@@ -45,6 +45,7 @@ var Path = func() *path {
 			continue
 		}
 		safePaths = append(safePaths, safePath)
+		// riv: also appended in argument parse
 	}
 
 	return &path{homeDir: homeDir, configFile: "config.yaml", allowUnsafePath: allowUnsafePath, safePaths: safePaths}
@@ -101,6 +102,10 @@ func (p *path) IsSafePath(path string) bool {
 
 func (p *path) SafePaths() []string {
 	return append([]string{p.homeDir}, p.safePaths...) // add homedir to safePaths
+}
+
+func (p *path) AppendSafePaths(appendSafePaths []string) {
+	p.safePaths = append(p.safePaths, appendSafePaths...)
 }
 
 func (p *path) ErrNotSafePath(path string) error {

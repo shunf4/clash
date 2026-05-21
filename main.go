@@ -36,6 +36,7 @@ var (
 	configFile             string
 	configString           string
 	configBytes            []byte
+	appendSafePaths        string
 	externalUI             string
 	externalController     string
 	externalControllerUnix string
@@ -47,6 +48,7 @@ func init() {
 	flag.StringVar(&homeDir, "d", os.Getenv("CLASH_HOME_DIR"), "set configuration directory")
 	flag.StringVar(&configFile, "f", os.Getenv("CLASH_CONFIG_FILE"), "specify configuration file")
 	flag.StringVar(&configString, "config", os.Getenv("CLASH_CONFIG_STRING"), "specify base64-encoded configuration string")
+	flag.StringVar(&appendSafePaths, "append-safe-paths", os.Getenv("CLASH_OVERRIDE_APPEND_SAFE_PATHS"), "comma-separated safe paths to append")
 	flag.StringVar(&externalUI, "ext-ui", os.Getenv("CLASH_OVERRIDE_EXTERNAL_UI_DIR"), "override external ui directory")
 	flag.StringVar(&externalController, "ext-ctl", os.Getenv("CLASH_OVERRIDE_EXTERNAL_CONTROLLER"), "override external controller address")
 	flag.StringVar(&externalControllerUnix, "ext-ctl-unix", os.Getenv("CLASH_OVERRIDE_EXTERNAL_CONTROLLER_UNIX"), "override external controller unix address")
@@ -174,6 +176,18 @@ func main() {
 	}
 	if secret != "" {
 		options = append(options, hub.WithSecret(secret))
+	}
+
+	if appendSafePaths != "" {
+		sps := strings.Split(appendSafePaths, ",")
+		newSps := []string{}
+		for _, sp := range sps {
+			sp = strings.TrimSpace(sp)
+			if sp != "" {
+				newSps = append(newSps, sp)
+			}
+		}
+		C.Path.AppendSafePaths(newSps)
 	}
 
 	if err := hub.Parse(configBytes, options...); err != nil {
