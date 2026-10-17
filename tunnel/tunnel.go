@@ -19,6 +19,7 @@ import (
 	"github.com/metacubex/mihomo/component/loopback"
 	"github.com/metacubex/mihomo/component/nat"
 	"github.com/metacubex/mihomo/component/process"
+	"github.com/metacubex/mihomo/component/proxydialer"
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/component/slowdown"
 	"github.com/metacubex/mihomo/component/sniffer"
@@ -29,6 +30,8 @@ import (
 	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/transport/socks5"
 	"github.com/metacubex/mihomo/tunnel/statistic"
+
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -74,6 +77,7 @@ type tunnel struct{}
 var Tunnel = tunnel{}
 var _ C.Tunnel = Tunnel
 var _ P.Tunnel = Tunnel
+var _ proxydialer.Tunnel = Tunnel
 
 func (t tunnel) HandleTCPConn(conn net.Conn, metadata *C.Metadata) {
 	connCtx := icontext.NewConnContext(conn, metadata)
@@ -112,6 +116,10 @@ func (t tunnel) HandleUDPPacket(packet C.UDPPacket, metadata *C.Metadata) {
 
 func (t tunnel) NatTable() C.NatTable {
 	return natTable
+}
+
+func (t tunnel) Proxies() map[string]C.Proxy {
+	return proxies
 }
 
 func (t tunnel) Providers() map[string]P.ProxyProvider {
@@ -389,6 +397,18 @@ func resolveMetadata(metadata *C.Metadata) (proxy C.Proxy, rule C.Rule, err erro
 				}
 			}
 		},
+		CheckPassRule: func(adapterName string) bool {
+			adapter, ok := proxies[adapterName]
+			if !ok {
+				return false
+			}
+			for a := adapter; a != nil; a = a.Unwrap(metadata, false) {
+				if a.Type() == C.PassRule {
+					return true
+				}
+			}
+			return false
+		},
 	}
 
 	switch FindProcessMode() {
@@ -574,13 +594,14 @@ func handleTCPConn(connCtx C.ConnContext) {
 
 		if N.NeedHandshake(remoteConn) {
 			defer func() {
-				for _, chain := range remoteConn.Chains() {
-					if chain == "REJECT" {
-						err = nil
-						return
-					}
-				}
 				if err != nil {
+					_ = remoteConn.Close()
+					for _, chain := range remoteConn.Chains() {
+						if chain == "REJECT" {
+							err = nil
+							return
+						}
+					}
 					remoteConn = nil
 				}
 			}()
@@ -647,68 +668,91 @@ func match(metadata *C.Metadata, helper C.RuleMatchHelper) (C.Proxy, C.Rule, err
 	configMux.RLock()
 	defer configMux.RUnlock()
 
-	for _, rule := range getRules(metadata) {
-		if matched, ada := rule.Match(metadata, helper); matched {
-			if strings.Contains(ada, ":::") {
-				overrideHost := ""
-				overridePort := int64(-1)
-				actionParts := strings.Split(ada, ":::")
-				if len(actionParts) >= 1 {
-					ada = actionParts[0]
+	var rematchChain []string
+	for {
+		var rematchProxy C.Proxy
+		var rematchRule C.Rule
+	GetRules:
+		for _, rule := range getRules(metadata) {
+			if matched, ada := rule.Match(metadata, helper); matched {
+				if strings.Contains(ada, ":::") {
+					overrideHost := ""
+					overridePort := int64(-1)
+					actionParts := strings.Split(ada, ":::")
+					if len(actionParts) >= 1 {
+						ada = actionParts[0]
+					}
+					if len(actionParts) >= 2 {
+						overrideHost = actionParts[1]
+					}
+					if len(actionParts) >= 3 {
+						var err error
+						overridePort, err = strconv.ParseInt(actionParts[2], 10, 32)
+						if err != nil || overridePort < 0 || overridePort >= 65536 {
+							overridePort = -1
+						}
+					}
+
+					if overrideHost != "" {
+						if ip, err := netip.ParseAddr(overrideHost); err == nil {
+							metadata.DstIP = ip
+							metadata.Host = ""
+						} else {
+							metadata.DstIP = netip.Addr{}
+							metadata.Host = overrideHost
+						}
+					}
+
+					if overridePort != -1 {
+						metadata.DstPort = uint16(overridePort)
+					}
 				}
-				if len(actionParts) >= 2 {
-					overrideHost = actionParts[1]
+				adapter, ok := proxies[ada]
+				if !ok {
+					continue
 				}
-				if len(actionParts) >= 3 {
-					var err error
-					overridePort, err = strconv.ParseInt(actionParts[2], 10, 32)
-					if err != nil || overridePort < 0 || overridePort >= 65536 {
-						overridePort = -1
+
+				// parse multi-layer nesting
+				for adapter := adapter; adapter != nil; adapter = adapter.Unwrap(metadata, false) {
+					if adapter.Type() == C.Pass {
+						log.Debugln("%s match Pass rule", adapter.Name())
+						continue GetRules
+					}
+					if adapter.Type() == C.Rematch {
+						log.Debugln("%s match Rematch rule", adapter.Name())
+						rematchProxy = adapter
+						rematchRule = rule
+						break GetRules
 					}
 				}
 
-				if overrideHost != "" {
-					if ip, err := netip.ParseAddr(overrideHost); err == nil {
-						metadata.DstIP = ip
-						metadata.Host = ""
-					} else {
-						metadata.DstIP = netip.Addr{}
-						metadata.Host = overrideHost
-					}
+				if metadata.NetWork == C.UDP && !adapter.SupportUDP() {
+					log.Debugln("%s UDP is not supported", adapter.Name())
+					continue
 				}
 
-				if overridePort != -1 {
-					metadata.DstPort = uint16(overridePort)
-				}
+				return adapter, rule, nil
 			}
-			adapter, ok := proxies[ada]
-			if !ok {
-				continue
-			}
-
-			// parse multi-layer nesting
-			passed := false
-			for adapter := adapter; adapter != nil; adapter = adapter.Unwrap(metadata, false) {
-				if adapter.Type() == C.Pass {
-					passed = true
-					break
-				}
-			}
-			if passed {
-				log.Debugln("%s match Pass rule", adapter.Name())
-				continue
-			}
-
-			if metadata.NetWork == C.UDP && !adapter.SupportUDP() {
-				log.Debugln("%s UDP is not supported", adapter.Name())
-				continue
-			}
-
-			return adapter, rule, nil
 		}
+		if rematchProxy != nil {
+			if slices.Contains(rematchChain, rematchProxy.Name()) {
+				log.Warnln("[Rule] rematch cycle detected on %s", rematchProxy.Name())
+				return rematchProxy, rematchRule, nil
+			}
+			rematchChain = append(rematchChain, rematchProxy.Name())
+			conn, err := rematchProxy.DialContext(context.Background(), metadata) // not a real connection, just for metadata update
+			if conn != nil {
+				_ = conn.Close()
+			}
+			if err != nil {
+				log.Warnln("[Rule] rematch proxy %s failed to update metadata: %s", rematchProxy.Name(), err)
+				return rematchProxy, rematchRule, nil
+			}
+			log.Debugln("[Rule] rematch proxy %s update metadata to rematch-name=%q sub-rule=%q", rematchProxy.Name(), metadata.InName, metadata.SpecialRules)
+			continue
+		}
+		return proxies["DIRECT"], nil, nil
 	}
-
-	return proxies["DIRECT"], nil, nil
 }
 
 func getRules(metadata *C.Metadata) []C.Rule {

@@ -2,6 +2,7 @@ package trie
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -14,7 +15,7 @@ const (
 	domainStep      = "."
 )
 
-// ErrInvalidDomain means insert domain is invalid
+// ErrInvalidDomain means a domain pattern is invalid.
 var ErrInvalidDomain = errors.New("invalid domain")
 
 // DomainTrie contains the main logic for adding and searching nodes for domain segments.
@@ -23,35 +24,76 @@ type DomainTrie[T any] struct {
 	root *Node[T]
 }
 
-func ValidAndSplitDomain(domain string) ([]string, bool) {
-	if domain != "" && domain[len(domain)-1] == '.' {
-		return nil, false
+// ValidAndSplitDomain lower-cases and splits a domain into its dot-separated
+// parts, reporting whether it is a well-formed pattern. It returns an error for
+// a trailing dot ("a.com."), leading/trailing whitespace, or an empty segment,
+// as well as for misplaced wildcards (see below). The error describes why the
+// invalid Clash-style domain pattern was rejected.
+func ValidAndSplitDomain(domain string) ([]string, error) {
+	originalDomain := domain
+	if domain == "" {
+		return nil, invalidDomainError(originalDomain, "domain is empty")
 	}
-	if domain != "" {
-		if r, _ := utf8.DecodeRuneInString(domain); unicode.IsSpace(r) {
-			return nil, false
-		}
-		if r, _ := utf8.DecodeLastRuneInString(domain); unicode.IsSpace(r) {
-			return nil, false
-		}
+
+	// A trailing dot would produce an empty final segment; reject it up front.
+	if domain[len(domain)-1] == '.' {
+		return nil, invalidDomainError(originalDomain, "trailing dot is not allowed")
 	}
+	// Reject leading/trailing whitespace (a common copy-paste artifact) so it
+	// isn't silently baked into a label.
+	if r, _ := utf8.DecodeRuneInString(domain); unicode.IsSpace(r) {
+		return nil, invalidDomainError(originalDomain, "leading whitespace is not allowed")
+	}
+	if r, _ := utf8.DecodeLastRuneInString(domain); unicode.IsSpace(r) {
+		return nil, invalidDomainError(originalDomain, "trailing whitespace is not allowed")
+	}
+
 	domain = strings.ToLower(domain)
 	parts := strings.Split(domain, domainStep)
+	// A single part must be non-empty (rejects ""); for multi-part domains every
+	// segment after the first must be non-empty (rejects "a..b", "a.", ".."),
+	// while an empty first segment is allowed as the ".example.com" dot-wildcard.
 	if len(parts) == 1 {
 		if parts[0] == "" {
-			return nil, false
+			return nil, invalidDomainError(originalDomain, "domain is empty")
 		}
-
-		return parts, true
-	}
-
-	for _, part := range parts[1:] {
-		if part == "" {
-			return nil, false
+	} else {
+		for i, part := range parts[1:] {
+			if part == "" {
+				return nil, invalidDomainError(originalDomain, fmt.Sprintf("label %d is empty", i+2))
+			}
 		}
 	}
 
-	return parts, true
+	// Validate wildcard placement so that DomainTrie.Search (treats a stray
+	// wildcard as a literal label) and DomainSet.Has (treats the wildcard byte
+	// as a wildcard) can never disagree:
+	//   - complexWildcard "+" is only valid as a whole first segment of a
+	//     multi-part domain, i.e. the "+.example.com" form. A bare "+", or a
+	//     "+" anywhere else, is rejected.
+	//   - wildcard "*" is only valid as a whole segment; a partial wildcard such
+	//     as "*a" or "a*b" is rejected.
+	for i, part := range parts {
+		if strings.Contains(part, complexWildcard) {
+			switch {
+			case part != complexWildcard:
+				return nil, invalidDomainError(originalDomain, fmt.Sprintf("%q wildcard must occupy the entire label %d", complexWildcard, i+1))
+			case i != 0:
+				return nil, invalidDomainError(originalDomain, fmt.Sprintf("%q wildcard is only allowed in the first label", complexWildcard))
+			case len(parts) == 1:
+				return nil, invalidDomainError(originalDomain, fmt.Sprintf("%q wildcard must be followed by another label", complexWildcard))
+			}
+		}
+		if strings.Contains(part, wildcard) && part != wildcard {
+			return nil, invalidDomainError(originalDomain, fmt.Sprintf("%q wildcard must occupy the entire label %d", wildcard, i+1))
+		}
+	}
+
+	return parts, nil
+}
+
+func invalidDomainError(domain, reason string) error {
+	return fmt.Errorf("%w %q: %s", ErrInvalidDomain, domain, reason)
 }
 
 // Insert adds a node to the trie.
@@ -62,9 +104,9 @@ func ValidAndSplitDomain(domain string) ([]string, bool) {
 // 4. .example.com
 // 5. +.example.com
 func (t *DomainTrie[T]) Insert(domain string, data T) error {
-	parts, valid := ValidAndSplitDomain(domain)
-	if !valid {
-		return ErrInvalidDomain
+	parts, err := ValidAndSplitDomain(domain)
+	if err != nil {
+		return err
 	}
 
 	if parts[0] == complexWildcard {
@@ -95,8 +137,8 @@ func (t *DomainTrie[T]) insert(parts []string, data T) {
 // 2. wildcard domain
 // 2. dot wildcard domain
 func (t *DomainTrie[T]) Search(domain string) *Node[T] {
-	parts, valid := ValidAndSplitDomain(domain)
-	if !valid || parts[0] == "" {
+	parts, err := ValidAndSplitDomain(domain)
+	if err != nil || parts[0] == "" {
 		return nil
 	}
 
@@ -133,6 +175,11 @@ func (t *DomainTrie[T]) Optimize() {
 	t.root.optimize()
 }
 
+// Foreach iterates over the stored domain patterns and their associated values
+// in unspecified order. Patterns use lowercase labels, "*" for a single-label
+// wildcard, and a leading "." for subdomain-only matching. Exact and suffix-only
+// patterns are separate entries; "+." shorthand is not emitted. Each pattern
+// and its value can be passed to Insert independently to reproduce the mappings.
 func (t *DomainTrie[T]) Foreach(fn func(domain string, data T) bool) {
 	for key, data := range t.root.getChildren() {
 		recursion([]string{key}, data, fn)
@@ -156,9 +203,6 @@ func recursion[T any](items []string, node *Node[T], fn func(domain string, data
 		newItems := append([]string{key}, items...)
 		if !data.isEmpty() {
 			domain := joinDomain(newItems)
-			if domain[0] == domainStepByte {
-				domain = complexWildcard + domain
-			}
 			if !fn(domain, data.Data()) {
 				return false
 			}

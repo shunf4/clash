@@ -157,7 +157,7 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
 	if options.FileDescriptor > 0 {
 		if tunnelName, err := getTunnelName(int32(options.FileDescriptor)); err == nil {
 			tunName = tunnelName // sing-tun must have the truth tun interface name even it from a fd
-			forwarderBindInterface = true
+			//forwarderBindInterface = true
 			log.Debugln("[TUN] use tun name %s for fd %d", tunnelName, options.FileDescriptor)
 		} else {
 			log.Warnln("[TUN] get tun name failed for fd %d, fallback to use tun interface name %s", options.FileDescriptor, tunName)
@@ -198,6 +198,12 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
 		udpTimeout = time.Second * time.Duration(options.UDPTimeout)
 	} else {
 		udpTimeout = sing.UDPTimeout
+	}
+	var icmpTimeout time.Duration
+	if options.ICMPTimeout != 0 {
+		icmpTimeout = time.Second * time.Duration(options.ICMPTimeout)
+	} else {
+		icmpTimeout = sing.ICMPTimeout
 	}
 	tableIndex := options.IPRoute2TableIndex
 	if tableIndex == 0 {
@@ -250,6 +256,22 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
 		if err != nil {
 			return nil, E.Cause(err, "parse exclude_dst_port_range")
 		}
+	}
+	var includeMACAddress []net.HardwareAddr
+	for _, mac := range options.IncludeMACAddress {
+		addr, err := net.ParseMAC(mac)
+		if err != nil {
+			return nil, E.Cause(err, "parse include_mac_address")
+		}
+		includeMACAddress = append(includeMACAddress, addr)
+	}
+	var excludeMACAddress []net.HardwareAddr
+	for _, mac := range options.ExcludeMACAddress {
+		addr, err := net.ParseMAC(mac)
+		if err != nil {
+			return nil, E.Cause(err, "parse exclude_mac_address")
+		}
+		excludeMACAddress = append(excludeMACAddress, addr)
 	}
 
 	var dnsAdds []netip.AddrPort
@@ -390,10 +412,13 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
 		IncludeAndroidUser:                    options.IncludeAndroidUser,
 		IncludePackage:                        options.IncludePackage,
 		ExcludePackage:                        options.ExcludePackage,
+		IncludeMACAddress:                     includeMACAddress,
+		ExcludeMACAddress:                     excludeMACAddress,
 		FileDescriptor:                        options.FileDescriptor,
 		InterfaceMonitor:                      defaultInterfaceMonitor,
 		EXP_RecvMsgX:                          options.RecvMsgX,
 		EXP_SendMsgX:                          options.SendMsgX,
+		EXP_ProcessorsPerChannel:              options.ProcessorsPerChannel,
 	}
 
 	if options.AutoRedirect {
@@ -467,10 +492,12 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
 		TunOptions:             tunOptions,
 		EndpointIndependentNat: options.EndpointIndependentNat,
 		UDPTimeout:             udpTimeout,
+		ICMPTimeout:            icmpTimeout,
 		Handler:                handler,
 		Logger:                 log.SingLogger,
 		ForwarderBindInterface: forwarderBindInterface,
 		InterfaceFinder:        interfaceFinder,
+		TCPCongestionControl:   options.CongestionController,
 		EnforceBindInterface:   EnforceBindInterface,
 	}
 	l.tunIf = tunIf

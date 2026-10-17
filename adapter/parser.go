@@ -18,6 +18,7 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 	opt := applyProxyOptions(options...)
 	basicOption := outbound.BasicOption{
 		DialerForAPI: opt.DialerForAPI,
+		TunnelForAPI: opt.TunnelForAPI,
 		ProviderName: opt.ProviderName,
 	}
 
@@ -110,6 +111,20 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 			break
 		}
 		proxy, err = outbound.NewTuic(*tuicOption)
+	case "shadowquic":
+		shadowQuicOption := &outbound.ShadowQuicOption{BasicOption: basicOption}
+		err = decoder.Decode(mapping, shadowQuicOption)
+		if err != nil {
+			break
+		}
+		proxy, err = outbound.NewShadowQuic(*shadowQuicOption)
+	case "gost-relay":
+		relayOption := &outbound.GostRelayOption{BasicOption: basicOption}
+		err = decoder.Decode(mapping, relayOption)
+		if err != nil {
+			break
+		}
+		proxy, err = outbound.NewGostRelay(*relayOption)
 	case "direct":
 		directOption := &outbound.DirectOption{BasicOption: basicOption}
 		err = decoder.Decode(mapping, directOption)
@@ -138,6 +153,13 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 			break
 		}
 		proxy = outbound.NewInternalHTTP(*internalHTTPOption)
+	case "rematch":
+		rematchOption := &outbound.RematchOption{BasicOption: basicOption}
+		err = decoder.Decode(mapping, rematchOption)
+		if err != nil {
+			break
+		}
+		proxy, err = outbound.NewRematch(*rematchOption)
 	case "ssh":
 		sshOption := &outbound.SshOption{BasicOption: basicOption}
 		err = decoder.Decode(mapping, sshOption)
@@ -180,6 +202,34 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 			break
 		}
 		proxy, err = outbound.NewTrustTunnel(*trustTunnelOption)
+	case "openvpn":
+		openVPNOption := &outbound.OpenVPNOption{BasicOption: basicOption}
+		err = decoder.Decode(mapping, openVPNOption)
+		if err != nil {
+			break
+		}
+		proxy, err = outbound.NewOpenVPN(*openVPNOption)
+	case "tailscale":
+		tailscaleOption := &outbound.TailscaleOption{BasicOption: basicOption}
+		err = decoder.Decode(mapping, tailscaleOption)
+		if err != nil {
+			break
+		}
+		proxy, err = outbound.NewTailscale(*tailscaleOption)
+	case "zerotier":
+		zeroTierOption := &outbound.ZeroTierOption{BasicOption: basicOption}
+		err = decoder.Decode(mapping, zeroTierOption)
+		if err != nil {
+			break
+		}
+		proxy, err = outbound.NewZeroTier(*zeroTierOption)
+	case "easytier":
+		easyTierOption := &outbound.EasyTierOption{BasicOption: basicOption}
+		err = decoder.Decode(mapping, easyTierOption)
+		if err != nil {
+			break
+		}
+		proxy, err = outbound.NewEasyTier(*easyTierOption)
 	default:
 		return nil, fmt.Errorf("unsupport proxy type: %s", proxyType)
 	}
@@ -208,6 +258,7 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 
 type proxyOption struct {
 	DialerForAPI C.Dialer
+	TunnelForAPI C.Tunnel
 	ProviderName string
 }
 
@@ -224,6 +275,12 @@ type ProxyOption func(opt *proxyOption)
 func WithDialerForAPI(dialer C.Dialer) ProxyOption {
 	return func(opt *proxyOption) {
 		opt.DialerForAPI = dialer
+	}
+}
+
+func WithTunnelForAPI(tunnel C.Tunnel) ProxyOption {
+	return func(opt *proxyOption) {
+		opt.TunnelForAPI = tunnel
 	}
 }
 

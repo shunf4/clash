@@ -21,6 +21,10 @@ type VlessOption struct {
 	ClientAuthType  string        `inbound:"client-auth-type,omitempty"`
 	ClientAuthCert  string        `inbound:"client-auth-cert,omitempty"`
 	EchKey          string        `inbound:"ech-key,omitempty"`
+	AllowInsecure   bool          `inbound:"allow-insecure,omitempty"`
+	ShadowTLS       ShadowTLS     `inbound:"shadow-tls,omitempty"`
+	ResTLS          ResTLS        `inbound:"res-tls,omitempty"`
+	JLSConfig       JLSConfig     `inbound:"jls-config,omitempty"`
 	RealityConfig   RealityConfig `inbound:"reality-config,omitempty"`
 	MuxOption       MuxOption     `inbound:"mux-option,omitempty"`
 }
@@ -35,8 +39,24 @@ type XHTTPConfig struct {
 	Path                 string `inbound:"path,omitempty"`
 	Host                 string `inbound:"host,omitempty"`
 	Mode                 string `inbound:"mode,omitempty"`
+	XPaddingBytes        string `inbound:"x-padding-bytes,omitempty"`
+	XPaddingObfsMode     bool   `inbound:"x-padding-obfs-mode,omitempty"`
+	XPaddingKey          string `inbound:"x-padding-key,omitempty"`
+	XPaddingHeader       string `inbound:"x-padding-header,omitempty"`
+	XPaddingPlacement    string `inbound:"x-padding-placement,omitempty"`
+	XPaddingMethod       string `inbound:"x-padding-method,omitempty"`
+	UplinkHTTPMethod     string `inbound:"uplink-http-method,omitempty"`
+	SessionPlacement     string `inbound:"session-placement,omitempty"`
+	SessionKey           string `inbound:"session-key,omitempty"`
+	SeqPlacement         string `inbound:"seq-placement,omitempty"`
+	SeqKey               string `inbound:"seq-key,omitempty"`
+	UplinkDataPlacement  string `inbound:"uplink-data-placement,omitempty"`
+	UplinkDataKey        string `inbound:"uplink-data-key,omitempty"`
+	UplinkChunkSize      string `inbound:"uplink-chunk-size,omitempty"`
 	NoSSEHeader          bool   `inbound:"no-sse-header,omitempty"`
 	ScStreamUpServerSecs string `inbound:"sc-stream-up-server-secs,omitempty"`
+	ScMaxBufferedPosts   string `inbound:"sc-max-buffered-posts,omitempty"`
+	ScMaxEachPostBytes   string `inbound:"sc-max-each-post-bytes,omitempty"`
 }
 
 func (o XHTTPConfig) Build() LC.XHTTPConfig {
@@ -45,7 +65,23 @@ func (o XHTTPConfig) Build() LC.XHTTPConfig {
 		Host:                 o.Host,
 		Mode:                 o.Mode,
 		NoSSEHeader:          o.NoSSEHeader,
+		XPaddingBytes:        o.XPaddingBytes,
+		XPaddingObfsMode:     o.XPaddingObfsMode,
+		XPaddingKey:          o.XPaddingKey,
+		XPaddingHeader:       o.XPaddingHeader,
+		XPaddingPlacement:    o.XPaddingPlacement,
+		XPaddingMethod:       o.XPaddingMethod,
+		UplinkHTTPMethod:     o.UplinkHTTPMethod,
+		SessionPlacement:     o.SessionPlacement,
+		SessionKey:           o.SessionKey,
+		SeqPlacement:         o.SeqPlacement,
+		SeqKey:               o.SeqKey,
+		UplinkDataPlacement:  o.UplinkDataPlacement,
+		UplinkDataKey:        o.UplinkDataKey,
+		UplinkChunkSize:      o.UplinkChunkSize,
 		ScStreamUpServerSecs: o.ScStreamUpServerSecs,
+		ScMaxBufferedPosts:   o.ScMaxBufferedPosts,
+		ScMaxEachPostBytes:   o.ScMaxEachPostBytes,
 	}
 }
 
@@ -89,6 +125,10 @@ func NewVless(options *VlessOption) (*Vless, error) {
 			ClientAuthType:  options.ClientAuthType,
 			ClientAuthCert:  options.ClientAuthCert,
 			EchKey:          options.EchKey,
+			AllowInsecure:   options.AllowInsecure,
+			ShadowTLS:       options.ShadowTLS.Build(),
+			ResTLS:          options.ResTLS.Build(),
+			JLSConfig:       options.JLSConfig.Build(),
 			RealityConfig:   options.RealityConfig.Build(),
 			MuxOption:       options.MuxOption.Build(),
 		},
@@ -114,7 +154,7 @@ func (v *Vless) Address() string {
 // Listen implements constant.InboundListener
 func (v *Vless) Listen(tunnel C.Tunnel) error {
 	var err error
-	v.l, err = sing_vless.New(v.vs, tunnel, v.Additions()...)
+	v.l, err = sing_vless.New(v.vs, v.ListenConfig(), tunnel, v.Additions()...)
 	if err != nil {
 		return err
 	}

@@ -63,17 +63,7 @@ type mieruDNSResolver struct {
 var _ mierucommon.DNSResolver = (*mieruDNSResolver)(nil)
 
 func (dr mieruDNSResolver) LookupIP(ctx context.Context, network, host string) (_ []net.IP, err error) {
-	var ip netip.Addr
-	switch dr.prefer {
-	case C.IPv4Only:
-		ip, err = resolver.ResolveIPv4WithResolver(ctx, host, resolver.ProxyServerHostResolver)
-	case C.IPv6Only:
-		ip, err = resolver.ResolveIPv6WithResolver(ctx, host, resolver.ProxyServerHostResolver)
-	case C.IPv6Prefer:
-		ip, err = resolver.ResolveIPPrefer6WithResolver(ctx, host, resolver.ProxyServerHostResolver)
-	default:
-		ip, err = resolver.ResolveIPWithResolver(ctx, host, resolver.ProxyServerHostResolver)
-	}
+	ip, err := resolveIPWithResolver(ctx, host, dr.prefer, resolver.ProxyServerHostResolver)
 	if err != nil {
 		return nil, fmt.Errorf("can't resolve ip: %w", err)
 	}
@@ -106,7 +96,7 @@ func (m *Mieru) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (
 	if err != nil {
 		return nil, fmt.Errorf("dial to %s failed: %w", metadata.UDPAddr(), err)
 	}
-	return newPacketConn(N.NewThreadSafePacketConn(mierucommon.NewUDPAssociateWrapper(mierucommon.NewPacketOverStreamTunnel(c))), m), nil
+	return NewPacketConn(N.NewThreadSafePacketConn(mierucommon.NewUDPAssociateWrapper(mierucommon.NewPacketOverStreamTunnel(c))), m), nil
 }
 
 // SupportUOT implements C.ProxyAdapter
@@ -166,17 +156,18 @@ func NewMieru(option MieruOption) (*Mieru, error) {
 		addr = net.JoinHostPort(option.Server, strconv.Itoa(beginPort))
 	}
 	outbound := &Mieru{
-		Base: &Base{
-			name:   option.Name,
-			addr:   addr,
-			tp:     C.Mieru,
-			pdName: option.ProviderName,
-			udp:    option.UDP,
-			xudp:   false,
-			iface:  option.Interface,
-			rmark:  option.RoutingMark,
-			prefer: option.IPVersion,
-		},
+		Base: NewBase(BaseOption{
+			Name:         option.Name,
+			Addr:         addr,
+			Type:         C.Mieru,
+			ProviderName: option.ProviderName,
+			UDP:          option.UDP,
+			TFO:          option.TFO,
+			MPTCP:        option.MPTCP,
+			Interface:    option.Interface,
+			RoutingMark:  option.RoutingMark,
+			Prefer:       option.IPVersion,
+		}),
 		option: &option,
 		client: c,
 	}

@@ -33,7 +33,7 @@ type ProtocolConfig struct {
 	PaddingMax int
 
 	// EnablePureDownlink enables the pure Sudoku downlink mode.
-	// When false, the connection uses the bandwidth-optimized packed downlink (requires AEAD).
+	// When false, the connection uses the bandwidth-optimized packed downlink.
 	EnablePureDownlink bool
 
 	// Client-only: final target "host:port".
@@ -64,10 +64,14 @@ type ProtocolConfig struct {
 	// Example: "aabbcc" => "/aabbcc/session", "/aabbcc/api/v1/upload", ...
 	HTTPMaskPathRoot string
 
-	// HTTPMaskMultiplex controls multiplex behavior when HTTPMask tunnel modes are enabled:
-	//   - "off": disable reuse; each Dial establishes its own HTTPMask tunnel
-	//   - "auto": reuse underlying HTTP connections across multiple tunnel dials (HTTP/1.1 keep-alive / HTTP/2)
-	//   - "on": enable "single tunnel, multi-target" mux (Sudoku-level multiplex; Dial behaves like "auto" otherwise)
+	// Multiplex controls transport reuse and Sudoku session mux:
+	//   - "off": disable session mux and HTTPMask transport reuse
+	//   - "auto": enable HTTPMask transport reuse only
+	//   - "on": enable session mux over raw TCP or HTTPMask
+	Multiplex string
+
+	// HTTPMaskMultiplex is the legacy location for Multiplex.
+	// When both fields are set, this legacy field wins for compatibility.
 	HTTPMaskMultiplex string
 }
 
@@ -101,10 +105,6 @@ func (c *ProtocolConfig) Validate() error {
 		return fmt.Errorf("padding-max (%d) must be >= padding-min (%d)", c.PaddingMax, c.PaddingMin)
 	}
 
-	if !c.EnablePureDownlink && c.AEADMethod == "none" {
-		return fmt.Errorf("bandwidth optimized downlink requires AEAD")
-	}
-
 	if c.HandshakeTimeoutSeconds < 0 {
 		return fmt.Errorf("handshake-timeout must be >= 0, got %d", c.HandshakeTimeoutSeconds)
 	}
@@ -133,10 +133,11 @@ func (c *ProtocolConfig) Validate() error {
 		}
 	}
 
-	switch strings.ToLower(strings.TrimSpace(c.HTTPMaskMultiplex)) {
-	case "", "off", "auto", "on":
-	default:
-		return fmt.Errorf("invalid http-mask-multiplex: %s, must be one of: off, auto, on", c.HTTPMaskMultiplex)
+	if _, err := NormalizeMultiplexMode(c.Multiplex); err != nil {
+		return fmt.Errorf("invalid multiplex: %w", err)
+	}
+	if _, err := NormalizeMultiplexMode(c.HTTPMaskMultiplex); err != nil {
+		return fmt.Errorf("invalid http-mask-multiplex: %w", err)
 	}
 
 	return nil
@@ -163,8 +164,42 @@ func DefaultConfig() *ProtocolConfig {
 		EnablePureDownlink:      true,
 		HandshakeTimeoutSeconds: 5,
 		HTTPMaskMode:            "legacy",
-		HTTPMaskMultiplex:       "off",
+		Multiplex:               "off",
 	}
+}
+
+func NormalizeMultiplexMode(mode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "off":
+		return "off", nil
+	case "auto":
+		return "auto", nil
+	case "on":
+		return "on", nil
+	default:
+		return "", fmt.Errorf("%q, must be one of: off, auto, on", mode)
+	}
+}
+
+func (c *ProtocolConfig) MultiplexMode() string {
+	if c == nil {
+		return "off"
+	}
+	for _, mode := range []string{c.HTTPMaskMultiplex, c.Multiplex} {
+		if strings.TrimSpace(mode) == "" {
+			continue
+		}
+		normalized, err := NormalizeMultiplexMode(mode)
+		if err == nil {
+			return normalized
+		}
+		return "off"
+	}
+	return "off"
+}
+
+func (c *ProtocolConfig) SessionMuxEnabled() bool {
+	return c.MultiplexMode() == "on"
 }
 
 func DerefInt(v *int, def int) int {

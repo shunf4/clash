@@ -16,6 +16,8 @@ import (
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
+
+	"github.com/gofrs/uuid/v5"
 )
 
 type ProxyAdapter interface {
@@ -37,7 +39,38 @@ type Base struct {
 	rmark  int
 	prefer C.DNSPrefer
 	dialer C.Dialer
-	id     string
+	id     uuid.UUID
+}
+
+type BaseOption struct {
+	Name         string
+	Addr         string
+	Type         C.AdapterType
+	ProviderName string
+	UDP          bool
+	XUDP         bool
+	TFO          bool
+	MPTCP        bool
+	Interface    string
+	RoutingMark  int
+	Prefer       C.DNSPrefer
+}
+
+func NewBase(opt BaseOption) *Base {
+	return &Base{
+		name:   opt.Name,
+		addr:   opt.Addr,
+		tp:     opt.Type,
+		pdName: opt.ProviderName,
+		udp:    opt.UDP,
+		xudp:   opt.XUDP,
+		tfo:    opt.TFO,
+		mpTcp:  opt.MPTCP,
+		iface:  opt.Interface,
+		rmark:  opt.RoutingMark,
+		prefer: opt.Prefer,
+		id:     utils.NewUUIDV4(),
+	}
 }
 
 // Name implements C.ProxyAdapter
@@ -47,11 +80,7 @@ func (b *Base) Name() string {
 
 // Id implements C.ProxyAdapter
 func (b *Base) Id() string {
-	if b.id == "" {
-		b.id = utils.NewUUIDV6().String()
-	}
-
-	return b.id
+	return b.id.String()
 }
 
 // Type implements C.ProxyAdapter
@@ -148,7 +177,7 @@ func (b *Base) DialOptions() (opts []dialer.Option) {
 
 func (b *Base) ResolveUDP(ctx context.Context, metadata *C.Metadata) error {
 	if !metadata.Resolved() {
-		ip, err := resolver.ResolveIP(ctx, metadata.Host)
+		ip, err := resolveIPWithResolver(ctx, metadata.Host, b.prefer, resolver.DefaultResolver)
 		if err != nil {
 			return fmt.Errorf("can't resolve ip: %w", err)
 		}
@@ -173,6 +202,7 @@ type BasicOption struct {
 	// The following parameters are used internally, assign value by the structure decoder are disallowed
 	//
 	DialerForAPI C.Dialer `proxy:"-"` // the dialer used for API usage has higher priority than all the above configurations.
+	TunnelForAPI C.Tunnel `proxy:"-"`
 	ProviderName string   `proxy:"-"`
 }
 
@@ -180,7 +210,7 @@ func (b *BasicOption) NewDialer(opts []dialer.Option) C.Dialer {
 	cDialer := b.DialerForAPI
 	if cDialer == nil {
 		if b.DialerProxy != "" {
-			cDialer = proxydialer.NewByName(b.DialerProxy)
+			cDialer = proxydialer.NewByName(b.DialerProxy, b.NewTunnel())
 		} else {
 			cDialer = dialer.NewDialer(opts...)
 		}
@@ -188,32 +218,8 @@ func (b *BasicOption) NewDialer(opts []dialer.Option) C.Dialer {
 	return cDialer
 }
 
-type BaseOption struct {
-	Name        string
-	Addr        string
-	Type        C.AdapterType
-	UDP         bool
-	XUDP        bool
-	TFO         bool
-	MPTCP       bool
-	Interface   string
-	RoutingMark int
-	Prefer      C.DNSPrefer
-}
-
-func NewBase(opt BaseOption) *Base {
-	return &Base{
-		name:   opt.Name,
-		addr:   opt.Addr,
-		tp:     opt.Type,
-		udp:    opt.UDP,
-		xudp:   opt.XUDP,
-		tfo:    opt.TFO,
-		mpTcp:  opt.MPTCP,
-		iface:  opt.Interface,
-		rmark:  opt.RoutingMark,
-		prefer: opt.Prefer,
-	}
+func (b *BasicOption) NewTunnel() C.Tunnel {
+	return b.TunnelForAPI
 }
 
 type conn struct {
@@ -268,8 +274,20 @@ func (c *conn) AddRef(ref any) {
 	c.ExtendedConn = N.NewRefConn(c.ExtendedConn, ref) // add ref for autoCloseProxyAdapter
 }
 
+// ipstackConn is a common experimental API interface implemented by:
+// *mipstack.TCPConn, *mipstack.UDPConn, *mipstack.IPConn
+// it's also implemented by our gVisor fork
+type ipstackConn interface {
+	ReadWithBuffer(getBuffer func(sizeHint int) []byte) (int, error)
+}
+
 func NewConn(c net.Conn, a C.ProxyAdapter) C.Conn {
-	if _, ok := c.(syscall.Conn); !ok { // exclusion system conn like *net.TCPConn
+	switch c.(type) {
+	case syscall.Conn: // exclusion system conn like *net.TCPConn
+		break
+	case ipstackConn: // exclusion *mipstack.TCPConn
+		break
+	default:
 		c = N.NewDeadlineConn(c) // most conn from outbound can't handle readDeadline correctly
 	}
 	cc := &conn{N.NewExtendedConn(c), nil, nil, a.Addr()}
@@ -333,9 +351,14 @@ func (c *packetConn) AddRef(ref any) {
 	c.EnhancePacketConn = N.NewRefPacketConn(c.EnhancePacketConn, ref) // add ref for autoCloseProxyAdapter
 }
 
-func newPacketConn(pc net.PacketConn, a ProxyAdapter) C.PacketConn {
+func NewPacketConn(pc net.PacketConn, a ProxyAdapter) C.PacketConn {
 	epc := N.NewEnhancePacketConn(pc)
-	if _, ok := pc.(syscall.Conn); !ok { // exclusion system conn like *net.UDPConn
+	switch pc.(type) {
+	case syscall.Conn: // exclusion system conn like *net.UDPConn
+		break
+	case ipstackConn: // exclusion *mipstack.UDPConn
+		break
+	default:
 		epc = N.NewDeadlineEnhancePacketConn(epc) // most conn from outbound can't handle readDeadline correctly
 	}
 	cpc := &packetConn{epc, nil, nil, a.Name(), utils.NewUUIDV4().String(), a.Addr(), a.ResolveUDP}

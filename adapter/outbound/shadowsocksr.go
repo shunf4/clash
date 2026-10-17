@@ -96,7 +96,7 @@ func (ssr *ShadowSocksR) ListenPacketContext(ctx context.Context, metadata *C.Me
 
 	epc := ssr.cipher.PacketConn(N.NewEnhancePacketConn(pc))
 	epc = ssr.protocol.PacketConn(epc)
-	return newPacketConn(&ssrPacketConn{EnhancePacketConn: epc, rAddr: addr}, ssr), nil
+	return NewPacketConn(&ssrPacketConn{EnhancePacketConn: epc, rAddr: addr}, ssr), nil
 }
 
 // ProxyInfo implements C.ProxyAdapter
@@ -158,18 +158,18 @@ func NewShadowSocksR(option ShadowSocksROption) (*ShadowSocksR, error) {
 	}
 
 	outbound := &ShadowSocksR{
-		Base: &Base{
-			name:   option.Name,
-			addr:   addr,
-			tp:     C.ShadowsocksR,
-			pdName: option.ProviderName,
-			udp:    option.UDP,
-			tfo:    option.TFO,
-			mpTcp:  option.MPTCP,
-			iface:  option.Interface,
-			rmark:  option.RoutingMark,
-			prefer: option.IPVersion,
-		},
+		Base: NewBase(BaseOption{
+			Name:         option.Name,
+			Addr:         addr,
+			Type:         C.ShadowsocksR,
+			ProviderName: option.ProviderName,
+			UDP:          option.UDP,
+			TFO:          option.TFO,
+			MPTCP:        option.MPTCP,
+			Interface:    option.Interface,
+			RoutingMark:  option.RoutingMark,
+			Prefer:       option.IPVersion,
+		}),
 		option:   &option,
 		cipher:   coreCiph,
 		obfs:     obfs,
@@ -189,7 +189,12 @@ func (spc *ssrPacketConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 	if err != nil {
 		return
 	}
-	return spc.EnhancePacketConn.WriteTo(packet[3:], spc.rAddr)
+	packet = packet[3:]
+	_, err = spc.EnhancePacketConn.WriteTo(packet, spc.rAddr)
+	if err != nil {
+		return 0, err
+	}
+	return len(b), nil
 }
 
 func (spc *ssrPacketConn) ReadFrom(b []byte) (int, net.Addr, error) {

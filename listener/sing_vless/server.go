@@ -5,13 +5,17 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/metacubex/mihomo/adapter/inbound"
 	"github.com/metacubex/mihomo/component/ca"
 	"github.com/metacubex/mihomo/component/ech"
 	C "github.com/metacubex/mihomo/constant"
 	LC "github.com/metacubex/mihomo/listener/config"
+	"github.com/metacubex/mihomo/listener/jls"
 	"github.com/metacubex/mihomo/listener/reality"
+	"github.com/metacubex/mihomo/listener/restls"
+	"github.com/metacubex/mihomo/listener/shadowtls"
 	"github.com/metacubex/mihomo/listener/sing"
 	"github.com/metacubex/mihomo/ntp"
 	"github.com/metacubex/mihomo/transport/gun"
@@ -34,7 +38,7 @@ type Listener struct {
 	decryption *encryption.ServerInstance
 }
 
-func New(config LC.VlessServer, tunnel C.Tunnel, additions ...inbound.Addition) (sl *Listener, err error) {
+func New(config LC.VlessServer, lc C.InboundListenConfig, tunnel C.Tunnel, additions ...inbound.Addition) (sl *Listener, err error) {
 	if len(additions) == 0 {
 		additions = []inbound.Addition{
 			inbound.WithInName("DEFAULT-VLESS"),
@@ -70,17 +74,23 @@ func New(config LC.VlessServer, tunnel C.Tunnel, additions ...inbound.Addition) 
 		return nil, err
 	}
 	if sl.decryption != nil {
+		decryption := sl.decryption
 		defer func() { // decryption must be closed to avoid the goroutine leak
 			if err != nil {
-				_ = sl.decryption.Close()
-				sl.decryption = nil
+				_ = decryption.Close()
 			}
 		}()
 	}
 
+	httpServer := http.Server{
+		IdleTimeout: 30 * time.Second,
+		Protocols:   new(http.Protocols),
+	}
 	tlsConfig := &tls.Config{Time: ntp.Now}
+	var shadowTLSBuilder *shadowtls.Builder
+	var restlsBuilder *restls.Builder
+	var jlsBuilder *jls.Builder
 	var realityBuilder *reality.Builder
-	var httpServer http.Server
 
 	if config.Certificate != "" && config.PrivateKey != "" {
 		certLoader, err := ca.NewTLSKeyPairLoader(config.Certificate, config.PrivateKey)
@@ -111,14 +121,45 @@ func New(config LC.VlessServer, tunnel C.Tunnel, additions ...inbound.Addition) 
 		}
 		tlsConfig.ClientCAs = pool
 	}
+	if tlsConfig.ClientAuth != tls.NoClientCert && tlsConfig.GetCertificate == nil {
+		return nil, errors.New("client-auth requires certificate")
+	}
+	securityModes := make([]string, 0, 5)
+	if tlsConfig.GetCertificate != nil {
+		securityModes = append(securityModes, "certificate")
+	}
 	if config.RealityConfig.PrivateKey != "" {
-		if tlsConfig.GetCertificate != nil {
-			return nil, errors.New("certificate is unavailable in reality")
-		}
-		if tlsConfig.ClientAuth != tls.NoClientCert {
-			return nil, errors.New("client-auth is unavailable in reality")
-		}
+		securityModes = append(securityModes, "reality")
+	}
+	if config.ShadowTLS.Enable {
+		securityModes = append(securityModes, "shadow-tls")
+	}
+	if config.ResTLS.Enable {
+		securityModes = append(securityModes, "res-tls")
+	}
+	if config.JLSConfig.Enable {
+		securityModes = append(securityModes, "jls")
+	}
+	if len(securityModes) > 1 {
+		return nil, errors.New("security modes are mutually exclusive: " + strings.Join(securityModes, ", "))
+	}
+	if config.RealityConfig.PrivateKey != "" {
 		realityBuilder, err = config.RealityConfig.Build(tunnel)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if config.ShadowTLS.Enable {
+		shadowTLSBuilder, err = shadowtls.New(config.ShadowTLS, tunnel)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if config.ResTLS.Enable {
+		restlsBuilder = restls.New(config.ResTLS, tunnel)
+	}
+	if config.JLSConfig.Enable {
+		jlsBuilder, err = jls.New(config.JLSConfig, tunnel)
 		if err != nil {
 			return nil, err
 		}
@@ -134,6 +175,7 @@ func New(config LC.VlessServer, tunnel C.Tunnel, additions ...inbound.Addition) 
 			sl.HandleConn(conn, tunnel, additions...)
 		})
 		httpServer.Handler = httpMux
+		httpServer.Protocols.SetHTTP1(true)
 		tlsConfig.NextProtos = append(tlsConfig.NextProtos, "http/1.1")
 	}
 	if config.GrpcServiceName != "" {
@@ -144,6 +186,15 @@ func New(config LC.VlessServer, tunnel C.Tunnel, additions ...inbound.Addition) 
 			},
 			HttpHandler: httpServer.Handler,
 		})
+		httpServer.Protocols.SetHTTP2(true)
+		// SetUnencryptedHTTP2 to ensure we can work in plain http2 and some tls conn is not *tls.Conn (like *reality.Conn)
+		//
+		// Enable HTTP/2 support unconditionally on the server.
+		//
+		// Note that this usage is limited to our own net/http fork
+		// The standard library also needs to mask the tls.Conn type for the conn returned by the Listener.
+		// see: https://github.com/golang/go/issues/79293#issuecomment-4426393534
+		httpServer.Protocols.SetUnencryptedHTTP2(true)
 		tlsConfig.NextProtos = append([]string{"h2"}, tlsConfig.NextProtos...) // h2 must before http/1.1
 	}
 	if config.XHTTPConfig.Mode != "" {
@@ -154,19 +205,51 @@ func New(config LC.VlessServer, tunnel C.Tunnel, additions ...inbound.Addition) 
 		}
 	}
 	if config.XHTTPConfig.Path != "" || config.XHTTPConfig.Host != "" || config.XHTTPConfig.Mode != "" {
-		httpServer.Handler = xhttp.NewServerHandler(xhttp.ServerOption{
+		httpServer.Handler, err = xhttp.NewServerHandler(xhttp.ServerOption{
 			Config: xhttp.Config{
 				Host:                 config.XHTTPConfig.Host,
 				Path:                 config.XHTTPConfig.Path,
 				Mode:                 config.XHTTPConfig.Mode,
+				XPaddingBytes:        config.XHTTPConfig.XPaddingBytes,
+				XPaddingObfsMode:     config.XHTTPConfig.XPaddingObfsMode,
+				XPaddingKey:          config.XHTTPConfig.XPaddingKey,
+				XPaddingHeader:       config.XHTTPConfig.XPaddingHeader,
+				XPaddingPlacement:    config.XHTTPConfig.XPaddingPlacement,
+				XPaddingMethod:       config.XHTTPConfig.XPaddingMethod,
+				UplinkHTTPMethod:     config.XHTTPConfig.UplinkHTTPMethod,
+				SessionPlacement:     config.XHTTPConfig.SessionPlacement,
+				SessionKey:           config.XHTTPConfig.SessionKey,
+				SeqPlacement:         config.XHTTPConfig.SeqPlacement,
+				SeqKey:               config.XHTTPConfig.SeqKey,
+				UplinkDataPlacement:  config.XHTTPConfig.UplinkDataPlacement,
+				UplinkDataKey:        config.XHTTPConfig.UplinkDataKey,
+				UplinkChunkSize:      config.XHTTPConfig.UplinkChunkSize,
 				NoSSEHeader:          config.XHTTPConfig.NoSSEHeader,
 				ScStreamUpServerSecs: config.XHTTPConfig.ScStreamUpServerSecs,
+				ScMaxBufferedPosts:   config.XHTTPConfig.ScMaxBufferedPosts,
+				ScMaxEachPostBytes:   config.XHTTPConfig.ScMaxEachPostBytes,
 			},
 			ConnHandler: func(conn net.Conn) {
 				sl.HandleConn(conn, tunnel, additions...)
 			},
 			HttpHandler: httpServer.Handler,
 		})
+		if err != nil {
+			return nil, err
+		}
+		httpServer.Protocols.SetHTTP1(true)
+		httpServer.Protocols.SetHTTP2(true)
+		// SetUnencryptedHTTP2 to ensure we can work in plain http2 and some tls conn is not *tls.Conn (like *reality.Conn)
+		//
+		// Enable HTTP/2 support unconditionally on the server.
+		//
+		// Note that this usage is limited to our own net/http fork
+		// The standard library also needs to mask the tls.Conn type for the conn returned by the Listener.
+		// see: https://github.com/golang/go/issues/79293#issuecomment-4426393534
+		httpServer.Protocols.SetUnencryptedHTTP2(true)
+		if !slices.Contains(tlsConfig.NextProtos, "http/1.1") {
+			tlsConfig.NextProtos = append([]string{"http/1.1"}, tlsConfig.NextProtos...)
+		}
 		if !slices.Contains(tlsConfig.NextProtos, "h2") {
 			tlsConfig.NextProtos = append([]string{"h2"}, tlsConfig.NextProtos...)
 		}
@@ -175,16 +258,22 @@ func New(config LC.VlessServer, tunnel C.Tunnel, additions ...inbound.Addition) 
 		addr := addr
 
 		//TCP
-		l, err := inbound.Listen("tcp", addr)
+		l, err := lc.Listen(context.Background(), "tcp", addr)
 		if err != nil {
 			return nil, err
 		}
-		if realityBuilder != nil {
+		if shadowTLSBuilder != nil {
+			l = shadowTLSBuilder.NewListener(l)
+		} else if restlsBuilder != nil {
+			l = restlsBuilder.NewListener(l)
+		} else if jlsBuilder != nil {
+			l = jlsBuilder.NewListener(l)
+		} else if realityBuilder != nil {
 			l = realityBuilder.NewListener(l)
 		} else if tlsConfig.GetCertificate != nil {
 			l = tls.NewListener(l, tlsConfig)
-		} else if sl.decryption == nil {
-			return nil, errors.New("disallow using Vless without any certificates/reality/decryption config")
+		} else if sl.decryption == nil && !config.AllowInsecure {
+			return nil, errors.New("disallow using Vless without any certificates/shadow-tls/res-tls/jls/reality/decryption/allow-insecure config")
 		}
 		sl.listeners = append(sl.listeners, l)
 
@@ -239,11 +328,12 @@ func (l *Listener) AddrList() (addrList []net.Addr) {
 func (l *Listener) HandleConn(conn net.Conn, tunnel C.Tunnel, additions ...inbound.Addition) {
 	ctx := sing.WithAdditions(context.TODO(), additions...)
 	if l.decryption != nil {
-		var err error
-		conn, err = l.decryption.Handshake(conn, nil)
+		c, err := l.decryption.Handshake(conn, nil)
 		if err != nil {
+			_ = conn.Close()
 			return
 		}
+		conn = c
 	}
 	err := l.service.NewConnection(ctx, conn, metadata.Metadata{
 		Protocol: "vless",

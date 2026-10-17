@@ -22,6 +22,7 @@ import (
 	"github.com/metacubex/mihomo/common/orderedmap"
 	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/common/yaml"
+	"github.com/metacubex/mihomo/component/age"
 	"github.com/metacubex/mihomo/component/auth"
 	"github.com/metacubex/mihomo/component/cidr"
 	"github.com/metacubex/mihomo/component/fakeip"
@@ -39,6 +40,7 @@ import (
 	LC "github.com/metacubex/mihomo/listener/config"
 	"github.com/metacubex/mihomo/log"
 	R "github.com/metacubex/mihomo/rules"
+	RB "github.com/metacubex/mihomo/rules/bundle"
 	RC "github.com/metacubex/mihomo/rules/common"
 	RP "github.com/metacubex/mihomo/rules/provider"
 	RW "github.com/metacubex/mihomo/rules/wrapper"
@@ -51,28 +53,27 @@ import (
 // General config
 type General struct {
 	Inbound
-	Mode                    T.TunnelMode            `json:"mode"`
-	UnifiedDelay            bool                    `json:"unified-delay"`
-	LogLevel                log.LogLevel            `json:"log-level"`
-	DelayTestUrl            string                  `json:"delay-test-url"`
-	IPv6                    bool                    `json:"ipv6"`
-	Interface               string                  `json:"interface-name"`
-	RoutingMark             int                     `json:"routing-mark"`
-	GeoXUrl                 GeoXUrl                 `json:"geox-url"`
-	GeoAutoUpdate           bool                    `json:"geo-auto-update"`
-	GeoUpdateInterval       int                     `json:"geo-update-interval"`
-	GeodataMode             bool                    `json:"geodata-mode"`
-	GeodataLoader           string                  `json:"geodata-loader"`
-	GeositeMatcher          string                  `json:"geosite-matcher"`
-	TCPConcurrent           bool                    `json:"tcp-concurrent"`
-	FindProcessMode         process.FindProcessMode `json:"find-process-mode"`
-	Sniffing                bool                    `json:"sniffing"`
-	GlobalClientFingerprint string                  `json:"global-client-fingerprint"`
-	GlobalUA                string                  `json:"global-ua"`
-	ETagSupport             bool                    `json:"etag-support"`
-	KeepAliveIdle           int                     `json:"keep-alive-idle"`
-	KeepAliveInterval       int                     `json:"keep-alive-interval"`
-	DisableKeepAlive        bool                    `json:"disable-keep-alive"`
+	Mode              T.TunnelMode            `json:"mode"`
+	UnifiedDelay      bool                    `json:"unified-delay"`
+	LogLevel          log.LogLevel            `json:"log-level"`
+	DelayTestUrl      string                  `json:"delay-test-url"`
+	IPv6              bool                    `json:"ipv6"`
+	Interface         string                  `json:"interface-name"`
+	RoutingMark       int                     `json:"routing-mark"`
+	GeoXUrl           GeoXUrl                 `json:"geox-url"`
+	GeoAutoUpdate     bool                    `json:"geo-auto-update"`
+	GeoUpdateInterval int                     `json:"geo-update-interval"`
+	GeodataMode       bool                    `json:"geodata-mode"`
+	GeodataLoader     string                  `json:"geodata-loader"`
+	GeositeMatcher    string                  `json:"geosite-matcher"`
+	TCPConcurrent     bool                    `json:"tcp-concurrent"`
+	FindProcessMode   process.FindProcessMode `json:"find-process-mode"`
+	Sniffing          bool                    `json:"sniffing"`
+	GlobalUA          string                  `json:"global-ua"`
+	ETagSupport       bool                    `json:"etag-support"`
+	KeepAliveIdle     int                     `json:"keep-alive-idle"`
+	KeepAliveInterval int                     `json:"keep-alive-interval"`
+	DisableKeepAlive  bool                    `json:"disable-keep-alive"`
 }
 
 // Inbound config
@@ -106,16 +107,17 @@ type GeoXUrl struct {
 
 // Controller config
 type Controller struct {
-	ExternalController     string
-	ExternalControllerTLS  string
-	ExternalControllerUnix string
-	ExternalControllerPipe string
-	ExternalUI             string
-	ExternalUIURL          string
-	ExternalUIName         string
-	ExternalDohServer      string
-	Secret                 string
-	Cors                   Cors
+	ExternalController            string
+	ExternalControllerTLS         string
+	ExternalControllerUnix        string
+	ExternalControllerPipe        string
+	ExternalControllerRoutingMark int
+	ExternalUI                    string
+	ExternalUIURL                 string
+	ExternalUIName                string
+	ExternalDohServer             string
+	Secret                        string
+	Cors                          Cors
 }
 
 type Cors struct {
@@ -160,7 +162,9 @@ type DNS struct {
 	Fallback              []dns.NameServer
 	FallbackIPFilter      []C.IpMatcher
 	FallbackDomainFilter  []C.DomainMatcher
+	FallbackLazyQuery     bool
 	Listen                string
+	ListenRoutingMark     int
 	EnhancedMode          C.DNSMode
 	DefaultNameserver     []dns.NameServer
 	CacheAlgorithm        string
@@ -239,7 +243,9 @@ type RawDNS struct {
 	NameServer                   []string                            `yaml:"nameserver" json:"nameserver"`
 	Fallback                     []string                            `yaml:"fallback" json:"fallback"`
 	FallbackFilter               RawFallbackFilter                   `yaml:"fallback-filter" json:"fallback-filter"`
+	FallbackLazyQuery            bool                                `yaml:"fallback-lazy-query" json:"fallback-lazy-query"`
 	Listen                       string                              `yaml:"listen" json:"listen"`
+	ListenRoutingMark            int                                 `yaml:"listen-routing-mark" json:"listen-routing-mark"`
 	EnhancedMode                 C.DNSMode                           `yaml:"enhanced-mode" json:"enhanced-mode"`
 	FakeIPRange                  string                              `yaml:"fake-ip-range" json:"fake-ip-range"`
 	FakeIPRange6                 string                              `yaml:"fake-ip-range6" json:"fake-ip-range6"`
@@ -284,7 +290,7 @@ type RawTun struct {
 	Stack               C.TUNStack `yaml:"stack" json:"stack"`
 	DNSHijack           []string   `yaml:"dns-hijack" json:"dns-hijack"`
 	AutoRoute           bool       `yaml:"auto-route" json:"auto-route"`
-	AutoDetectInterface bool       `yaml:"auto-detect-interface"`
+	AutoDetectInterface bool       `yaml:"auto-detect-interface" json:"auto-detect-interface"`
 
 	MTU        uint32 `yaml:"mtu" json:"mtu,omitempty"`
 	GSO        bool   `yaml:"gso" json:"gso,omitempty"`
@@ -316,9 +322,13 @@ type RawTun struct {
 	IncludeAndroidUser                    []int          `yaml:"include-android-user" json:"include-android-user,omitempty"`
 	IncludePackage                        []string       `yaml:"include-package" json:"include-package,omitempty"`
 	ExcludePackage                        []string       `yaml:"exclude-package" json:"exclude-package,omitempty"`
+	IncludeMACAddress                     []string       `yaml:"include-mac-address" json:"include-mac-address,omitempty"`
+	ExcludeMACAddress                     []string       `yaml:"exclude-mac-address" json:"exclude-mac-address,omitempty"`
 	EndpointIndependentNat                bool           `yaml:"endpoint-independent-nat" json:"endpoint-independent-nat,omitempty"`
 	UDPTimeout                            int64          `yaml:"udp-timeout" json:"udp-timeout,omitempty"`
+	ICMPTimeout                           int64          `yaml:"icmp-timeout" json:"icmp-timeout,omitempty"`
 	DisableICMPForwarding                 bool           `yaml:"disable-icmp-forwarding" json:"disable-icmp-forwarding,omitempty"`
+	CongestionController                  string         `yaml:"congestion-controller" json:"congestion-controller,omitempty"`
 	FileDescriptor                        int            `yaml:"file-descriptor" json:"file-descriptor"`
 
 	Inet4RouteAddress        []netip.Prefix `yaml:"inet4-route-address" json:"inet4-route-address,omitempty"`
@@ -329,6 +339,9 @@ type RawTun struct {
 	// darwin special config
 	RecvMsgX bool `yaml:"recvmsgx" json:"recvmsgx,omitempty"`
 	SendMsgX bool `yaml:"sendmsgx" json:"sendmsgx,omitempty"`
+
+	// gvisor special config (Non-public option; do not include it in the document.)
+	ProcessorsPerChannel int `yaml:"processors-per-channel" json:"processors-per-channel,omitempty"`
 }
 
 type RawTuicServer struct {
@@ -354,10 +367,10 @@ type RawIPTables struct {
 }
 
 type RawExperimental struct {
-	Fingerprints     []string `yaml:"fingerprints"`
-	QUICGoDisableGSO bool     `yaml:"quic-go-disable-gso"`
-	QUICGoDisableECN bool     `yaml:"quic-go-disable-ecn"`
-	IP4PEnable       bool     `yaml:"dialer-ip4p-convert"`
+	Fingerprints     []string `yaml:"fingerprints" json:"fingerprints"`
+	QUICGoDisableGSO bool     `yaml:"quic-go-disable-gso" json:"quic-go-disable-gso"`
+	QUICGoDisableECN bool     `yaml:"quic-go-disable-ecn" json:"quic-go-disable-ecn"`
+	IP4PEnable       bool     `yaml:"dialer-ip4p-convert" json:"dialer-ip4p-convert"`
 }
 
 type RawProfile struct {
@@ -402,52 +415,53 @@ type RawTLS struct {
 }
 
 type RawConfig struct {
-	Port                    int                     `yaml:"port" json:"port"`
-	SocksPort               int                     `yaml:"socks-port" json:"socks-port"`
-	RedirPort               int                     `yaml:"redir-port" json:"redir-port"`
-	TProxyPort              int                     `yaml:"tproxy-port" json:"tproxy-port"`
-	MixedPort               int                     `yaml:"mixed-port" json:"mixed-port"`
-	ShadowSocksConfig       string                  `yaml:"ss-config" json:"ss-config"`
-	VmessConfig             string                  `yaml:"vmess-config" json:"vmess-config"`
-	InboundTfo              bool                    `yaml:"inbound-tfo" json:"inbound-tfo"`
-	InboundMPTCP            bool                    `yaml:"inbound-mptcp" json:"inbound-mptcp"`
-	Authentication          []string                `yaml:"authentication" json:"authentication"`
-	SkipAuthPrefixes        []netip.Prefix          `yaml:"skip-auth-prefixes" json:"skip-auth-prefixes"`
-	LanAllowedIPs           []netip.Prefix          `yaml:"lan-allowed-ips" json:"lan-allowed-ips"`
-	LanDisAllowedIPs        []netip.Prefix          `yaml:"lan-disallowed-ips" json:"lan-disallowed-ips"`
-	AllowLan                bool                    `yaml:"allow-lan" json:"allow-lan"`
-	BindAddress             string                  `yaml:"bind-address" json:"bind-address"`
-	Mode                    T.TunnelMode            `yaml:"mode" json:"mode"`
-	UnifiedDelay            bool                    `yaml:"unified-delay" json:"unified-delay"`
-	LogLevel                log.LogLevel            `yaml:"log-level" json:"log-level"`
-	DelayTestUrl            string                  `yaml:"delay-test-url"`
-	IPv6                    bool                    `yaml:"ipv6" json:"ipv6"`
-	ExternalController      string                  `yaml:"external-controller" json:"external-controller"`
-	ExternalControllerPipe  string                  `yaml:"external-controller-pipe" json:"external-controller-pipe"`
-	ExternalControllerUnix  string                  `yaml:"external-controller-unix" json:"external-controller-unix"`
-	ExternalControllerTLS   string                  `yaml:"external-controller-tls" json:"external-controller-tls"`
-	ExternalControllerCors  RawCors                 `yaml:"external-controller-cors" json:"external-controller-cors"`
-	ExternalUI              string                  `yaml:"external-ui" json:"external-ui"`
-	ExternalUIURL           string                  `yaml:"external-ui-url" json:"external-ui-url"`
-	ExternalUIName          string                  `yaml:"external-ui-name" json:"external-ui-name"`
-	ExternalDohServer       string                  `yaml:"external-doh-server" json:"external-doh-server"`
-	Secret                  string                  `yaml:"secret" json:"secret"`
-	Interface               string                  `yaml:"interface-name" json:"interface-name"`
-	RoutingMark             int                     `yaml:"routing-mark" json:"routing-mark"`
-	Tunnels                 []LC.Tunnel             `yaml:"tunnels" json:"tunnels"`
-	GeoAutoUpdate           bool                    `yaml:"geo-auto-update" json:"geo-auto-update"`
-	GeoUpdateInterval       int                     `yaml:"geo-update-interval" json:"geo-update-interval"`
-	GeodataMode             bool                    `yaml:"geodata-mode" json:"geodata-mode"`
-	GeodataLoader           string                  `yaml:"geodata-loader" json:"geodata-loader"`
-	GeositeMatcher          string                  `yaml:"geosite-matcher" json:"geosite-matcher"`
-	TCPConcurrent           bool                    `yaml:"tcp-concurrent" json:"tcp-concurrent"`
-	FindProcessMode         process.FindProcessMode `yaml:"find-process-mode" json:"find-process-mode"`
-	GlobalClientFingerprint string                  `yaml:"global-client-fingerprint" json:"global-client-fingerprint"`
-	GlobalUA                string                  `yaml:"global-ua" json:"global-ua"`
-	ETagSupport             bool                    `yaml:"etag-support" json:"etag-support"`
-	KeepAliveIdle           int                     `yaml:"keep-alive-idle" json:"keep-alive-idle"`
-	KeepAliveInterval       int                     `yaml:"keep-alive-interval" json:"keep-alive-interval"`
-	DisableKeepAlive        bool                    `yaml:"disable-keep-alive" json:"disable-keep-alive"`
+	Port                          int                     `yaml:"port" json:"port"`
+	SocksPort                     int                     `yaml:"socks-port" json:"socks-port"`
+	RedirPort                     int                     `yaml:"redir-port" json:"redir-port"`
+	TProxyPort                    int                     `yaml:"tproxy-port" json:"tproxy-port"`
+	MixedPort                     int                     `yaml:"mixed-port" json:"mixed-port"`
+	ShadowSocksConfig             string                  `yaml:"ss-config" json:"ss-config"`
+	VmessConfig                   string                  `yaml:"vmess-config" json:"vmess-config"`
+	InboundTfo                    bool                    `yaml:"inbound-tfo" json:"inbound-tfo"`
+	InboundMPTCP                  bool                    `yaml:"inbound-mptcp" json:"inbound-mptcp"`
+	Authentication                []string                `yaml:"authentication" json:"authentication"`
+	SkipAuthPrefixes              []netip.Prefix          `yaml:"skip-auth-prefixes" json:"skip-auth-prefixes"`
+	LanAllowedIPs                 []netip.Prefix          `yaml:"lan-allowed-ips" json:"lan-allowed-ips"`
+	LanDisAllowedIPs              []netip.Prefix          `yaml:"lan-disallowed-ips" json:"lan-disallowed-ips"`
+	AllowLan                      bool                    `yaml:"allow-lan" json:"allow-lan"`
+	BindAddress                   string                  `yaml:"bind-address" json:"bind-address"`
+	Mode                          T.TunnelMode            `yaml:"mode" json:"mode"`
+	UnifiedDelay                  bool                    `yaml:"unified-delay" json:"unified-delay"`
+	LogLevel                      log.LogLevel            `yaml:"log-level" json:"log-level"`
+	DelayTestUrl                  string                  `yaml:"delay-test-url"`
+	IPv6                          bool                    `yaml:"ipv6" json:"ipv6"`
+	ExternalController            string                  `yaml:"external-controller" json:"external-controller"`
+	ExternalControllerRoutingMark int                     `yaml:"external-controller-routing-mark" json:"external-controller-routing-mark"`
+	ExternalControllerPipe        string                  `yaml:"external-controller-pipe" json:"external-controller-pipe"`
+	ExternalControllerUnix        string                  `yaml:"external-controller-unix" json:"external-controller-unix"`
+	ExternalControllerTLS         string                  `yaml:"external-controller-tls" json:"external-controller-tls"`
+	ExternalControllerCors        RawCors                 `yaml:"external-controller-cors" json:"external-controller-cors"`
+	ExternalUI                    string                  `yaml:"external-ui" json:"external-ui"`
+	ExternalUIURL                 string                  `yaml:"external-ui-url" json:"external-ui-url"`
+	ExternalUIName                string                  `yaml:"external-ui-name" json:"external-ui-name"`
+	ExternalDohServer             string                  `yaml:"external-doh-server" json:"external-doh-server"`
+	Secret                        string                  `yaml:"secret" json:"secret"`
+	Interface                     string                  `yaml:"interface-name" json:"interface-name"`
+	RoutingMark                   int                     `yaml:"routing-mark" json:"routing-mark"`
+	Tunnels                       []LC.Tunnel             `yaml:"tunnels" json:"tunnels"`
+	GeoAutoUpdate                 bool                    `yaml:"geo-auto-update" json:"geo-auto-update"`
+	GeoUpdateInterval             int                     `yaml:"geo-update-interval" json:"geo-update-interval"`
+	GeodataMode                   bool                    `yaml:"geodata-mode" json:"geodata-mode"`
+	GeodataLoader                 string                  `yaml:"geodata-loader" json:"geodata-loader"`
+	GeositeMatcher                string                  `yaml:"geosite-matcher" json:"geosite-matcher"`
+	TCPConcurrent                 bool                    `yaml:"tcp-concurrent" json:"tcp-concurrent"`
+	FindProcessMode               process.FindProcessMode `yaml:"find-process-mode" json:"find-process-mode"`
+	GlobalClientFingerprint       string                  `yaml:"global-client-fingerprint" json:"global-client-fingerprint"`
+	GlobalUA                      string                  `yaml:"global-ua" json:"global-ua"`
+	ETagSupport                   bool                    `yaml:"etag-support" json:"etag-support"`
+	KeepAliveIdle                 int                     `yaml:"keep-alive-idle" json:"keep-alive-idle"`
+	KeepAliveInterval             int                     `yaml:"keep-alive-interval" json:"keep-alive-interval"`
+	DisableKeepAlive              bool                    `yaml:"disable-keep-alive" json:"disable-keep-alive"`
 
 	ProxyProvider map[string]map[string]any `yaml:"proxy-providers" json:"proxy-providers"`
 	RuleProvider  map[string]map[string]any `yaml:"rule-providers" json:"rule-providers"`
@@ -569,15 +583,16 @@ func DefaultRawConfig() *RawConfig {
 			Interval:      30,
 		},
 		Tun: RawTun{
-			Enable:              false,
-			Device:              "",
-			Stack:               C.TunGvisor,
-			DNSHijack:           []string{"0.0.0.0:53"}, // default hijack all dns query
-			AutoRoute:           true,
-			AutoDetectInterface: true,
-			Inet6Address:        []netip.Prefix{netip.MustParsePrefix("fdfe:dcba:9876::1/126")},
-			RecvMsgX:            true,
-			SendMsgX:            false, // In the current implementation, if enabled, the kernel may freeze during multi-thread downloads, so it is disabled by default.
+			Enable:               false,
+			Device:               "",
+			Stack:                C.TunMips,
+			DNSHijack:            []string{"0.0.0.0:53"}, // default hijack all dns query
+			AutoRoute:            true,
+			AutoDetectInterface:  true,
+			Inet6Address:         []netip.Prefix{netip.MustParsePrefix("fdfe:dcba:9876::1/126")},
+			RecvMsgX:             true,
+			SendMsgX:             false, // In the current implementation, if enabled, the kernel may freeze during multi-thread downloads, so it is disabled by default.
+			ProcessorsPerChannel: 1,     // For most users, memory usage is more important than peak performance. Setting this to 1 can significantly reduce memory consumption.
 		},
 		TuicServer: RawTuicServer{
 			Enable:                false,
@@ -638,6 +653,12 @@ func DefaultRawConfig() *RawConfig {
 func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 	// config with default value
 	rawCfg := DefaultRawConfig()
+
+	// decrypt config
+	buf, err := age.DecryptBytes(buf)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt config error: %w", err)
+	}
 
 	if err := yaml.Unmarshal(buf, rawCfg); err != nil {
 		return nil, err
@@ -1618,6 +1639,9 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 func temporaryUpdateGeneral(general *General) func()
 
 func parseGeneral(cfg *RawConfig) (*General, error) {
+	if cfg.GlobalClientFingerprint != "" {
+		log.Errorln("The `global-client-fingerprint` configuration is removed, please set `client-fingerprint` directly on the proxy instead")
+	}
 	return &General{
 		Inbound: Inbound{
 			Port:              cfg.Port,
@@ -1648,19 +1672,18 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 			ASN:     cfg.GeoXUrl.ASN,
 			GeoSite: cfg.GeoXUrl.GeoSite,
 		},
-		GeoAutoUpdate:           cfg.GeoAutoUpdate,
-		GeoUpdateInterval:       cfg.GeoUpdateInterval,
-		GeodataMode:             cfg.GeodataMode,
-		GeodataLoader:           cfg.GeodataLoader,
-		GeositeMatcher:          cfg.GeositeMatcher,
-		TCPConcurrent:           cfg.TCPConcurrent,
-		FindProcessMode:         cfg.FindProcessMode,
-		GlobalClientFingerprint: cfg.GlobalClientFingerprint,
-		GlobalUA:                cfg.GlobalUA,
-		ETagSupport:             cfg.ETagSupport,
-		KeepAliveIdle:           cfg.KeepAliveIdle,
-		KeepAliveInterval:       cfg.KeepAliveInterval,
-		DisableKeepAlive:        cfg.DisableKeepAlive,
+		GeoAutoUpdate:     cfg.GeoAutoUpdate,
+		GeoUpdateInterval: cfg.GeoUpdateInterval,
+		GeodataMode:       cfg.GeodataMode,
+		GeodataLoader:     cfg.GeodataLoader,
+		GeositeMatcher:    cfg.GeositeMatcher,
+		TCPConcurrent:     cfg.TCPConcurrent,
+		FindProcessMode:   cfg.FindProcessMode,
+		GlobalUA:          cfg.GlobalUA,
+		ETagSupport:       cfg.ETagSupport,
+		KeepAliveIdle:     cfg.KeepAliveIdle,
+		KeepAliveInterval: cfg.KeepAliveInterval,
+		DisableKeepAlive:  cfg.DisableKeepAlive,
 	}, nil
 }
 
@@ -1672,15 +1695,16 @@ func parseController(cfg *RawConfig) (*Controller, error) {
 		return nil, fmt.Errorf("external UI name is not local: %s", uiName)
 	}
 	return &Controller{
-		ExternalController:     cfg.ExternalController,
-		ExternalUI:             cfg.ExternalUI,
-		ExternalUIURL:          cfg.ExternalUIURL,
-		ExternalUIName:         cfg.ExternalUIName,
-		Secret:                 cfg.Secret,
-		ExternalControllerPipe: cfg.ExternalControllerPipe,
-		ExternalControllerUnix: cfg.ExternalControllerUnix,
-		ExternalControllerTLS:  cfg.ExternalControllerTLS,
-		ExternalDohServer:      cfg.ExternalDohServer,
+		ExternalController:            cfg.ExternalController,
+		ExternalUI:                    cfg.ExternalUI,
+		ExternalUIURL:                 cfg.ExternalUIURL,
+		ExternalUIName:                cfg.ExternalUIName,
+		Secret:                        cfg.Secret,
+		ExternalControllerRoutingMark: cfg.ExternalControllerRoutingMark,
+		ExternalControllerPipe:        cfg.ExternalControllerPipe,
+		ExternalControllerUnix:        cfg.ExternalControllerUnix,
+		ExternalControllerTLS:         cfg.ExternalControllerTLS,
+		ExternalDohServer:             cfg.ExternalDohServer,
 		Cors: Cors{
 			AllowOrigins:        cfg.ExternalControllerCors.AllowOrigins,
 			AllowPrivateNetwork: cfg.ExternalControllerCors.AllowPrivateNetwork,
@@ -1752,12 +1776,13 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 	proxies["REJECT-DROP"] = adapter.NewProxy(outbound.NewRejectDrop())
 	proxies["COMPATIBLE"] = adapter.NewProxy(outbound.NewCompatible())
 	proxies["PASS"] = adapter.NewProxy(outbound.NewPass())
+	proxies["PASS-RULE"] = adapter.NewProxy(outbound.NewPassRule())
 	proxies["INTERNAL-HTTP"] = adapter.NewProxy(outbound.NewInternalHTTP(outbound.InternalHTTPOption{Name: "INTERNAL-HTTP"}))
 	proxyList = append(proxyList, "DIRECT", "REJECT")
 
 	// parse proxy
 	for idx, mapping := range proxiesConfig {
-		proxy, err := adapter.ParseProxy(mapping)
+		proxy, err := adapter.ParseProxy(mapping, adapter.WithTunnelForAPI(T.Tunnel))
 		if err != nil {
 			return nil, nil, fmt.Errorf("proxy %d: %w", idx, err)
 		}
@@ -1794,7 +1819,7 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 			return nil, nil, fmt.Errorf("can not defined a provider called `%s`", provider.ReservedName)
 		}
 
-		pd, err := provider.ParseProxyProvider(name, mapping)
+		pd, err := provider.ParseProxyProvider(name, mapping, T.Tunnel)
 		if err != nil {
 			return nil, nil, fmt.Errorf("parse proxy provider %s error: %w", name, err)
 		}
@@ -1823,7 +1848,7 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 
 	var ps []C.Proxy
 	for _, v := range proxyList {
-		if proxies[v].Type() == C.Pass {
+		if proxies[v].Type() == C.Pass || proxies[v].Type() == C.PassRule {
 			continue
 		}
 		ps = append(ps, proxies[v])
@@ -1833,12 +1858,17 @@ func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[
 	providersMap[provider.ReservedName] = pd
 
 	if !hasGlobal {
-		global := outboundgroup.NewSelector(
-			&outboundgroup.GroupCommonOption{
+		global, err := outboundgroup.NewSelector(
+			outboundgroup.GroupCommonOption{
 				Name: "GLOBAL",
 			},
+			outboundgroup.SelectorOption{},
+			proxies["COMPATIBLE"],
 			[]P.ProxyProvider{pd},
 		)
+		if err != nil {
+			return nil, nil, fmt.Errorf("new GLOBAL proxy group error: %w", err)
+		}
 		proxies["GLOBAL"] = adapter.NewProxy(global)
 	}
 
@@ -1874,11 +1904,11 @@ func parseListeners(cfg *RawConfig, filterExcludePorts []int) (listeners map[str
 
 		inboundListener, err := listener.ParseListener(mapping)
 		if err != nil {
-			return nil, fmt.Errorf("proxy %d: %w", index, err)
+			return nil, fmt.Errorf("listener %d: %w", index, err)
 		}
 
 		name := inboundListener.Name()
-		if _, exist := mapping[name]; exist {
+		if _, exist := listeners[name]; exist {
 			return nil, fmt.Errorf("listener %s is the duplicate name", name)
 		}
 
@@ -1893,7 +1923,7 @@ func parseRuleProviders(cfg *RawConfig) (ruleProviders map[string]P.RuleProvider
 	ruleProviders = map[string]P.RuleProvider{}
 	// parse rule provider
 	for name, mapping := range cfg.RuleProvider {
-		rp, err := RP.ParseRuleProvider(name, mapping, R.ParseRule)
+		rp, err := RP.ParseRuleProvider(name, mapping, R.ParseRule, RB.MakeBundleFile)
 		if err != nil {
 			return nil, err
 		}
@@ -2055,8 +2085,12 @@ func parseHosts(cfg *RawConfig) (*trie.DomainTrie[resolver.HostValue], *trie.Dom
 					node = tree.Search(node.Data().Domain)
 				}
 			}
-			_ = tree.Insert(domain, value)
-			_ = dialIPDirectlyTree.Insert(domain, hasDialIPDirectlySuffix)
+			if err := tree.Insert(domain, value); err != nil {
+				log.Warnln("skip invalid hosts entry: %s", err)
+			}
+			if err := dialIPDirectlyTree.Insert(domain, hasDialIPDirectlySuffix); err != nil {
+				log.Warnln("skip invalid dialIPDirectlyTree entry: %s", err)
+			}
 		}
 	}
 	tree.Optimize()
@@ -2196,6 +2230,18 @@ func parseNameServer(servers []string, respectRules bool, preferH3 bool) ([]dns.
 			dnsNetType = "quic" // DNS over QUIC
 		case "system":
 			dnsNetType = "system" // System DNS
+		case "ts", "tailscale":
+			addr = u.Host
+			dnsNetType = "tailscale" // Tailscale DNS via proxy name
+			if addr == "" {
+				err = errors.New("missing Tailscale proxy name")
+			}
+		case "et", "easytier":
+			addr = u.Host
+			dnsNetType = "easytier" // EasyTier overlay DNS via proxy name
+			if addr == "" {
+				err = errors.New("missing EasyTier proxy name")
+			}
 		case "dhcp":
 			addr = server[len("dhcp://"):] // some special notation cannot be parsed by url
 			dnsNetType = "dhcp"            // UDP from DHCP
@@ -2273,7 +2319,7 @@ func parsePureDNSServer(server string) string {
 	}
 }
 
-func parseNameServerPolicy(nsPolicy *orderedmap.OrderedMap[string, any], ruleProviders map[string]P.RuleProvider, respectRules bool, preferH3 bool) ([]dns.Policy, error) {
+func parseNameServerPolicy(nsPolicy *orderedmap.OrderedMap[string, any], adapterName string, ruleProviders map[string]P.RuleProvider, respectRules bool, preferH3 bool) ([]dns.Policy, error) {
 	var policy []dns.Policy
 
 	for pair := nsPolicy.Oldest(); pair != nil; pair = pair.Next() {
@@ -2326,21 +2372,21 @@ func parseNameServerPolicy(nsPolicy *orderedmap.OrderedMap[string, any], rulePro
 
 		if strings.HasPrefix(domain, "rule-set:") {
 			domainSetName := domain[9:]
-			matcher, err := parseDomainRuleSet(domainSetName, "dns.nameserver-policy", ruleProviders)
+			matcher, err := parseDomainRuleSet(domainSetName, adapterName, ruleProviders)
 			if err != nil {
 				return nil, err
 			}
 			policy[idx] = dns.Policy{Matcher: matcher, NameServers: nameservers}
 		} else if strings.HasPrefix(domain, "geosite:") {
 			country := domain[8:]
-			matcher, err := RC.NewGEOSITE(country, "dns.nameserver-policy")
+			matcher, err := RC.NewGEOSITE(country, adapterName)
 			if err != nil {
 				return nil, err
 			}
 			policy[idx] = dns.Policy{Matcher: matcher, NameServers: nameservers}
 		} else {
-			if _, valid := trie.ValidAndSplitDomain(domain); !valid {
-				return nil, fmt.Errorf("DNS ResoverRule invalid domain: %s", domain)
+			if _, err := trie.ValidAndSplitDomain(domain); err != nil {
+				return nil, fmt.Errorf("%s[%d]: %w", adapterName, idx, err)
 			}
 		}
 	}
@@ -2359,16 +2405,17 @@ func parseDNS(rawCfg *RawConfig, ruleProviders map[string]P.RuleProvider) (*DNS,
 	}
 
 	dnsCfg := &DNS{
-		Enable:         cfg.Enable,
-		Listen:         cfg.Listen,
-		PreferH3:       cfg.PreferH3,
-		IPv6Timeout:    cfg.IPv6Timeout,
-		IPv6:           cfg.IPv6,
-		UseHosts:       cfg.UseHosts,
-		UseSystemHosts: cfg.UseSystemHosts,
-		EnhancedMode:   cfg.EnhancedMode,
-		CacheAlgorithm: cfg.CacheAlgorithm,
-		CacheMaxSize:   cfg.CacheMaxSize,
+		Enable:            cfg.Enable,
+		Listen:            cfg.Listen,
+		ListenRoutingMark: cfg.ListenRoutingMark,
+		PreferH3:          cfg.PreferH3,
+		IPv6Timeout:       cfg.IPv6Timeout,
+		IPv6:              cfg.IPv6,
+		UseHosts:          cfg.UseHosts,
+		UseSystemHosts:    cfg.UseSystemHosts,
+		EnhancedMode:      cfg.EnhancedMode,
+		CacheAlgorithm:    cfg.CacheAlgorithm,
+		CacheMaxSize:      cfg.CacheMaxSize,
 	}
 	var err error
 	if dnsCfg.NameServer, err = parseNameServer(cfg.NameServer, cfg.RespectRules, cfg.PreferH3); err != nil {
@@ -2379,7 +2426,7 @@ func parseDNS(rawCfg *RawConfig, ruleProviders map[string]P.RuleProvider) (*DNS,
 		return nil, err
 	}
 
-	if dnsCfg.NameServerPolicy, err = parseNameServerPolicy(cfg.NameServerPolicy, ruleProviders, cfg.RespectRules, cfg.PreferH3); err != nil {
+	if dnsCfg.NameServerPolicy, err = parseNameServerPolicy(cfg.NameServerPolicy, "dns.nameserver-policy", ruleProviders, cfg.RespectRules, cfg.PreferH3); err != nil {
 		return nil, err
 	}
 
@@ -2387,7 +2434,7 @@ func parseDNS(rawCfg *RawConfig, ruleProviders map[string]P.RuleProvider) (*DNS,
 		return nil, err
 	}
 
-	if dnsCfg.ProxyServerPolicy, err = parseNameServerPolicy(cfg.ProxyServerNameserverPolicy, ruleProviders, false, cfg.PreferH3); err != nil {
+	if dnsCfg.ProxyServerPolicy, err = parseNameServerPolicy(cfg.ProxyServerNameserverPolicy, "dns.proxy-server-nameserver-policy", ruleProviders, false, cfg.PreferH3); err != nil {
 		return nil, err
 	}
 	if len(dnsCfg.ProxyServerPolicy) != 0 && len(dnsCfg.ProxyServerNameserver) == 0 {
@@ -2442,14 +2489,16 @@ func parseDNS(rawCfg *RawConfig, ruleProviders map[string]P.RuleProvider) (*DNS,
 	}
 
 	if cfg.EnhancedMode == C.DNSFakeIP {
-		var fakeIPTrie *trie.DomainTrie[struct{}]
-		if len(dnsCfg.Fallback) != 0 {
-			fakeIPTrie = trie.New[struct{}]()
+		var fakeIPDomainSetBuilder *trie.DomainSetBuilder
+		if cfg.FakeIPFilterMode != C.FilterRule && len(dnsCfg.Fallback) != 0 {
+			fakeIPDomainSetBuilder = &trie.DomainSetBuilder{}
 			for _, fb := range dnsCfg.Fallback {
 				if net.ParseIP(fb.Addr) != nil {
 					continue
 				}
-				_ = fakeIPTrie.Insert(fb.Addr, struct{}{})
+				if err := fakeIPDomainSetBuilder.Insert(fb.Addr); err != nil {
+					log.Warnln("skip fallback nameserver in fake-ip filter: %s", err)
+				}
 			}
 		}
 
@@ -2462,7 +2511,7 @@ func parseDNS(rawCfg *RawConfig, ruleProviders map[string]P.RuleProvider) (*DNS,
 			}
 			skipper.Rules = rules
 		} else {
-			host, err := parseDomain(cfg.FakeIPFilter, fakeIPTrie, "dns.fake-ip-filter", ruleProviders)
+			host, err := parseDomain(cfg.FakeIPFilter, fakeIPDomainSetBuilder, "dns.fake-ip-filter", ruleProviders)
 			if err != nil {
 				return nil, err
 			}
@@ -2525,14 +2574,14 @@ func parseDNS(rawCfg *RawConfig, ruleProviders map[string]P.RuleProvider) (*DNS,
 			dnsCfg.FallbackIPFilter = append(dnsCfg.FallbackIPFilter, matcher)
 		}
 		if len(cfg.FallbackFilter.Domain) > 0 {
-			domainTrie := trie.New[struct{}]()
+			var domainSetBuilder trie.DomainSetBuilder
 			for idx, domain := range cfg.FallbackFilter.Domain {
-				err = domainTrie.Insert(domain, struct{}{})
+				err = domainSetBuilder.Insert(domain)
 				if err != nil {
 					return nil, fmt.Errorf("DNS FallbackDomain[%d] format error: %w", idx, err)
 				}
 			}
-			matcher := domainTrie.NewDomainSet() // dns.fallback-filter.domain
+			matcher := domainSetBuilder.Build() // dns.fallback-filter.domain
 			dnsCfg.FallbackDomainFilter = append(dnsCfg.FallbackDomainFilter, matcher)
 		}
 		if len(cfg.FallbackFilter.GeoSite) > 0 {
@@ -2545,6 +2594,7 @@ func parseDNS(rawCfg *RawConfig, ruleProviders map[string]P.RuleProvider) (*DNS,
 				dnsCfg.FallbackDomainFilter = append(dnsCfg.FallbackDomainFilter, matcher)
 			}
 		}
+		dnsCfg.FallbackLazyQuery = cfg.FallbackLazyQuery
 	}
 
 	return dnsCfg, nil
@@ -2661,9 +2711,13 @@ func parseTun(rawTun RawTun, dns *DNS, general *General) error {
 		IncludeAndroidUser:                    rawTun.IncludeAndroidUser,
 		IncludePackage:                        rawTun.IncludePackage,
 		ExcludePackage:                        rawTun.ExcludePackage,
+		IncludeMACAddress:                     rawTun.IncludeMACAddress,
+		ExcludeMACAddress:                     rawTun.ExcludeMACAddress,
 		EndpointIndependentNat:                rawTun.EndpointIndependentNat,
 		UDPTimeout:                            rawTun.UDPTimeout,
+		ICMPTimeout:                           rawTun.ICMPTimeout,
 		DisableICMPForwarding:                 rawTun.DisableICMPForwarding,
+		CongestionController:                  rawTun.CongestionController,
 		FileDescriptor:                        rawTun.FileDescriptor,
 
 		Inet4RouteAddress:        rawTun.Inet4RouteAddress,
@@ -2673,6 +2727,8 @@ func parseTun(rawTun RawTun, dns *DNS, general *General) error {
 
 		RecvMsgX: rawTun.RecvMsgX,
 		SendMsgX: rawTun.SendMsgX,
+
+		ProcessorsPerChannel: rawTun.ProcessorsPerChannel,
 	}
 
 	return nil
@@ -2761,7 +2817,7 @@ func parseSniffer(snifferRaw RawSniffer, ruleProviders map[string]P.RuleProvider
 
 	forceDomain, err := parseDomain(snifferRaw.ForceDomain, nil, "sniffer.force-domain", ruleProviders)
 	if err != nil {
-		return nil, fmt.Errorf("error in force-domain, error:%w", err)
+		return nil, err
 	}
 	snifferConfig.ForceDomain = forceDomain
 
@@ -2779,7 +2835,7 @@ func parseSniffer(snifferRaw RawSniffer, ruleProviders map[string]P.RuleProvider
 
 	skipDomain, err := parseDomain(snifferRaw.SkipDomain, nil, "sniffer.skip-domain", ruleProviders)
 	if err != nil {
-		return nil, fmt.Errorf("error in skip-domain, error:%w", err)
+		return nil, err
 	}
 	snifferConfig.SkipDomain = skipDomain
 
@@ -2833,9 +2889,9 @@ func parseIPCIDR(addresses []string, cidrSet *cidr.IpCidrSet, adapterName string
 	return
 }
 
-func parseDomain(domains []string, domainTrie *trie.DomainTrie[struct{}], adapterName string, ruleProviders map[string]P.RuleProvider) (matchers []C.DomainMatcher, err error) {
+func parseDomain(domains []string, domainSetBuilder *trie.DomainSetBuilder, adapterName string, ruleProviders map[string]P.RuleProvider) (matchers []C.DomainMatcher, err error) {
 	var matcher C.DomainMatcher
-	for _, domain := range domains {
+	for idx, domain := range domains {
 		domainLower := strings.ToLower(domain)
 		if strings.HasPrefix(domainLower, "geosite:") {
 			subkeys := strings.Split(domain, ":")
@@ -2844,7 +2900,7 @@ func parseDomain(domains []string, domainTrie *trie.DomainTrie[struct{}], adapte
 			for _, country := range subkeys {
 				matcher, err = RC.NewGEOSITE(country, adapterName)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("%s[%d] %q: %w", adapterName, idx, domain, err)
 				}
 				matchers = append(matchers, matcher)
 			}
@@ -2855,22 +2911,22 @@ func parseDomain(domains []string, domainTrie *trie.DomainTrie[struct{}], adapte
 			for _, domainSetName := range subkeys {
 				matcher, err = parseDomainRuleSet(domainSetName, adapterName, ruleProviders)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("%s[%d] %q: %w", adapterName, idx, domain, err)
 				}
 				matchers = append(matchers, matcher)
 			}
 		} else {
-			if domainTrie == nil {
-				domainTrie = trie.New[struct{}]()
+			if domainSetBuilder == nil {
+				domainSetBuilder = &trie.DomainSetBuilder{}
 			}
-			err = domainTrie.Insert(domain, struct{}{})
+			err = domainSetBuilder.Insert(domain)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%s[%d]: %w", adapterName, idx, err)
 			}
 		}
 	}
-	if !domainTrie.IsEmpty() {
-		matcher = domainTrie.NewDomainSet()
+	if !domainSetBuilder.IsEmpty() {
+		matcher = domainSetBuilder.Build()
 		matchers = append(matchers, matcher)
 	}
 	return
@@ -2882,7 +2938,7 @@ func parseIPRuleSet(domainSetName string, adapterName string, ruleProviders map[
 	} else {
 		switch rp.Behavior() {
 		case P.Domain:
-			return nil, fmt.Errorf("rule provider type error, except ipcidr,actual %s", rp.Behavior())
+			return nil, fmt.Errorf("rule provider type error, expect ipcidr,actual %s", rp.Behavior())
 		case P.Classical:
 			log.Warnln("%s provider is %s, only matching it contain ip rule", rp.Name(), rp.Behavior())
 		default:
@@ -2897,7 +2953,7 @@ func parseDomainRuleSet(domainSetName string, adapterName string, ruleProviders 
 	} else {
 		switch rp.Behavior() {
 		case P.IPCIDR:
-			return nil, fmt.Errorf("rule provider type error, except domain,actual %s", rp.Behavior())
+			return nil, fmt.Errorf("rule provider type error, expect domain,actual %s", rp.Behavior())
 		case P.Classical:
 			log.Warnln("%s provider is %s, only matching it contain domain rule", rp.Name(), rp.Behavior())
 		default:

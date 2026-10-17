@@ -14,12 +14,8 @@ import (
 	P "github.com/metacubex/mihomo/constant/provider"
 )
 
-type urlTestOption func(*URLTest)
-
-func urlTestWithTolerance(tolerance uint16) urlTestOption {
-	return func(u *URLTest) {
-		u.tolerance = tolerance
-	}
+type URLTestOption struct {
+	Tolerance uint16 `group:"tolerance,omitempty"`
 }
 
 type URLTest struct {
@@ -180,6 +176,7 @@ func (u *URLTest) MarshalJSON() ([]byte, error) {
 		"fixed":          u.selected,
 		"hidden":         u.Hidden(),
 		"icon":           u.Icon(),
+		"emptyFallback":  u.EmptyFallback().Name(),
 	})
 }
 
@@ -195,20 +192,10 @@ func (u *URLTest) URLTest(ctx context.Context, url string, expectedStatus utils.
 	return u.GroupBase.URLTest(ctx, u.testUrl, expectedStatus)
 }
 
-func parseURLTestOption(config map[string]any) []urlTestOption {
-	opts := []urlTestOption{}
-
-	// tolerance
-	if elm, ok := config["tolerance"]; ok {
-		if tolerance, ok := elm.(int); ok {
-			opts = append(opts, urlTestWithTolerance(uint16(tolerance)))
-		}
+func NewURLTest(option GroupCommonOption, urlTestOption URLTestOption, emptyFallback C.Proxy, providers []P.ProxyProvider) (*URLTest, error) {
+	if emptyFallback == nil {
+		return nil, errors.New("empty fallback proxy not exist")
 	}
-
-	return opts
-}
-
-func NewURLTest(option *GroupCommonOption, providers []P.ProxyProvider, options ...urlTestOption) *URLTest {
 	urlTest := &URLTest{
 		GroupBase: NewGroupBase(GroupBaseOption{
 			Name:           option.Name,
@@ -220,17 +207,15 @@ func NewURLTest(option *GroupCommonOption, providers []P.ProxyProvider, options 
 			ExcludeType:    option.ExcludeType,
 			TestTimeout:    option.TestTimeout,
 			MaxFailedTimes: option.MaxFailedTimes,
+			EmptyFallback:  emptyFallback,
 			Providers:      providers,
 		}),
 		fastSingle:     singledo.NewSingle[C.Proxy](time.Second * 10),
 		disableUDP:     option.DisableUDP,
 		testUrl:        option.URL,
 		expectedStatus: option.ExpectedStatus,
+		tolerance:      urlTestOption.Tolerance,
 	}
 
-	for _, option := range options {
-		option(urlTest)
-	}
-
-	return urlTest
+	return urlTest, nil
 }

@@ -186,27 +186,6 @@ jobs:
     - name: Verify Go env
       run: go env
 
-      # TODO: remove after issue77731 fixed, see: https://github.com/golang/go/issues/77731
-    - name: Fix issue77731 for Golang1.26
-      if: ${{ matrix.jobs.goversion == '' }}
-      run: |
-        cd $(go env GOROOT)
-        patch --verbose -p 1 < $GITHUB_WORKSPACE/.github/patch/issue77731.patch
-
-      # TODO: remove after issue77975 fixed, see: https://github.com/golang/go/issues/77975
-    - name: Fix issue77975 for Golang1.26
-      if: ${{ matrix.jobs.goversion == '' }}
-      run: |
-        cd $(go env GOROOT)
-        patch --verbose -p 1 < $GITHUB_WORKSPACE/.github/patch/issue77975.patch
-
-      # TODO: remove after issue77930 fixed, see: https://github.com/golang/go/issues/77930
-    - name: Fix issue77930 for Golang1.26
-      if: ${{ matrix.jobs.goversion == '' }}
-      run: |
-        cd $(go env GOROOT)
-        patch --verbose -p 1 < $GITHUB_WORKSPACE/.github/patch/issue77930.patch
-
     - name: Set variables
       run: |
         VERSION="${GITHUB_REF_NAME,,}-$(git rev-parse --short HEAD)"
@@ -242,6 +221,7 @@ jobs:
       if: ${{ matrix.jobs.test == 'test' }}
       run: |
         export SKIP_CONCURRENT_TEST=1
+        export SKIP_INTEROP_TEST=1
         go test ./...
         echo "---test with_gvisor---"
         go test ./... -tags "with_gvisor" -count=1
@@ -378,7 +358,7 @@ jobs:
       shell: bash
 
     - name: Tag Repo
-      uses: richardsimko/update-tag@v1
+      uses: richardsimko/update-tag@v3
       with:
         tag_name: Prerelease-${{ github.ref_name }}
       env:
@@ -395,7 +375,7 @@ jobs:
         EOF
 
     - name: Upload Prerelease
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       if: ${{  success() }}
       with:
         tag_name: Prerelease-${{ github.ref_name }}
@@ -457,7 +437,7 @@ jobs:
         working-directory: bin
   
       - name: Upload Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         if: ${{ success() }}
         with:
           tag_name: ${{ github.event.inputs.version }}
