@@ -4,24 +4,35 @@
 package netparam
 
 import (
-	"os/exec"
-	"strings"
+	"time"
 
 	"github.com/metacubex/mihomo/log"
 	"golang.org/x/sys/windows/registry"
 )
 
 func GetDhcpNameservers() (nameservers []string, domain string, searchs []string) {
-	out, err := exec.Command("powershell", "-command", "$ifi=Find-NetRoute -RemoteIPAddress 0.0.0.0|Select InterfaceIndex -Last 1|Select -ExpandProperty InterfaceIndex;Get-WmiObject Win32_NetworkAdapter -Filter InterfaceIndex=$ifi|Select-Object -ExpandProperty GUID").Output()
+	start := time.Now()
+
+	iface, err := getDefaultInterface()
 	if err != nil {
-		log.Warnln("GetDhcpNameservers() powershell: %s", err.Error())
+		log.Warnln("GetDhcpNameservers() get default interface: %s", err.Error())
 		return []string{}, "", []string{}
 	}
 
-	outStr := strings.TrimSpace(string(out))
+	nameservers, domain, searchs = getDhcpNameserversFromRegistry(iface.guid)
+
+	log.Debugln("[netparam] GetDhcpNameservers(): ifIndex=%d guid=%s nextHop=%q nameservers=%v domain=%q searchs=%v cost=%s",
+		iface.ifIndex, iface.guid, iface.gateway, nameservers, domain, searchs, time.Since(start))
+	return
+}
+
+func getDhcpNameserversFromRegistry(guid string) (nameservers []string, domain string, searchs []string) {
+	if guid == "" {
+		return []string{}, "", []string{}
+	}
 
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE,
-		`SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\`+outStr, registry.QUERY_VALUE)
+		`SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\`+guid, registry.QUERY_VALUE)
 	if err != nil {
 		return []string{}, "", []string{}
 	}
@@ -79,29 +90,39 @@ func filterEmptyString(s []string) []string {
 }
 
 func GetGateways() (gateways []string) {
-	out, err := exec.Command("powershell", "-command", "Find-NetRoute -RemoteIPAddress 0.0.0.0 | Select-Object -ExpandProperty NextHop -Last 1").Output()
-	if err == nil {
-		outStr := strings.TrimSpace(string(out))
-		return filterEmptyString([]string{outStr})
-	}
+	start := time.Now()
 
-	out, err = exec.Command("powershell", "-command", "$ifi=Find-NetRoute -RemoteIPAddress 0.0.0.0|Select InterfaceIndex -Last 1|Select -ExpandProperty InterfaceIndex;Get-WmiObject Win32_NetworkAdapter -Filter InterfaceIndex=$ifi|Select-Object -ExpandProperty GUID").Output()
+	iface, err := getDefaultInterface()
 	if err != nil {
-		log.Warnln("GetGateways() powershell: %s", err.Error())
+		log.Warnln("GetGateways() get default interface: %s", err.Error())
 		return []string{}
 	}
 
-	outStr := strings.TrimSpace(string(out))
+	// The next hop of the default route is its gateway unless the route is on
+	// the local link (e.g. a TUN adapter), in which case fall back to the
+	// registry values, as the previous implementation did.
+	gateways = filterEmptyString([]string{iface.gateway})
+	if len(gateways) == 0 {
+		gateways = getGatewaysFromRegistry(iface.guid)
+	}
+
+	log.Debugln("[netparam] GetGateways(): ifIndex=%d guid=%s nextHop=%q gateways=%v cost=%s",
+		iface.ifIndex, iface.guid, iface.gateway, gateways, time.Since(start))
+	return gateways
+}
+
+func getGatewaysFromRegistry(guid string) (gws []string) {
+	if guid == "" {
+		return []string{}
+	}
 
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE,
-		`SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\`+outStr, registry.QUERY_VALUE)
+		`SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\`+guid, registry.QUERY_VALUE)
 	if err != nil {
 		return []string{}
 	}
 
 	defer k.Close()
-
-	var gws []string = nil
 
 	gws, _, err = k.GetStringsValue("DefaultGateway")
 	if err != nil {

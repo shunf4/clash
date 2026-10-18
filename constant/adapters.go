@@ -114,6 +114,16 @@ type Dialer interface {
 	ListenPacket(ctx context.Context, network, address string, rAddrPort netip.AddrPort) (net.PacketConn, error)
 }
 
+// mod: remote UDP resolution. RemoteUDPResolver is implemented by packet conns
+// whose UDP wire format carries the destination address inside every packet
+// (SOCKS5, Shadowsocks, SSR, Snell). When the inbound destination is a domain
+// name, the tunnel keeps the name and hands it to the outbound instead of
+// resolving it locally, so the upstream server performs the lookup (socks5h
+// semantics, no DNS leak).
+type RemoteUDPResolver interface {
+	SupportRemoteUDP() bool
+}
+
 type ProxyInfo struct {
 	XUDP         bool
 	TFO          bool

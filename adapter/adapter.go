@@ -166,6 +166,47 @@ func (p *Proxy) MarshalJSON() ([]byte, error) {
 func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.IntRanges[uint16]) (t uint16, err error) {
 	var satisfied bool
 
+	// mod: detailed start/finish logs for explicit delay tests, see delaylog.go
+	logTest := delayTestLogEnabled(ctx)
+	var (
+		stage     = "parse-url"
+		testStart = time.Now()
+		dialStart time.Time
+		dialTime  time.Duration
+		elapsed   = func() time.Duration {
+			if dialStart.IsZero() {
+				return time.Since(testStart)
+			}
+			return dialTime
+		}
+		httpStatus int
+		chains     C.Chain
+	)
+	if logTest {
+		log.Debugln("[DelayTest] start proxy=%q type=%s url=%q", p.Name(), p.Type().String(), url)
+		defer func() {
+			stageText := stage
+			if err == nil && !satisfied {
+				stageText = "expected"
+			}
+			total := time.Since(testStart)
+			httpElapsed := total - elapsed()
+			// keep both parts non-negative when the clock moved in odd ways
+			if httpElapsed < 0 {
+				httpElapsed = 0
+			}
+			if err != nil || !satisfied {
+				log.Warnln("[DelayTest] fail proxy=%q type=%s url=%q stage=%s total=%dms dial=%dms http=%dms status=%d chain=%q err=%v",
+					p.Name(), p.Type().String(), url, stageText, total.Milliseconds(), elapsed().Milliseconds(), httpElapsed.Milliseconds(),
+					httpStatus, chains.String(), err)
+			} else {
+				log.Infoln("[DelayTest] finish proxy=%q type=%s url=%q delay=%dms dial=%dms http=%dms status=%d chain=%q",
+					p.Name(), p.Type().String(), url, t, elapsed().Milliseconds(), httpElapsed.Milliseconds(),
+					httpStatus, chains.String())
+			}
+		}()
+	}
+
 	defer func() {
 		alive := err == nil
 		record := C.DelayHistory{Time: time.Now()}
@@ -206,14 +247,19 @@ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.In
 		return
 	}
 
+	stage = "dial"
+	dialStart = time.Now()
 	start := time.Now()
 	instance, err := p.DialContext(ctx, &addr)
+	dialTime = time.Since(dialStart)
 	if err != nil {
 		return
 	}
 	defer func() {
 		_ = instance.Close()
 	}()
+	chains = instance.Chains()
+	stage = "http"
 
 	req, err := http.NewRequest(http.MethodHead, url, nil)
 	if err != nil {
@@ -255,6 +301,7 @@ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.In
 	}
 
 	_ = resp.Body.Close()
+	httpStatus = resp.StatusCode
 
 	if unifiedDelay {
 		second := time.Now()
@@ -264,6 +311,7 @@ func (p *Proxy) URLTest(ctx context.Context, url string, expectedStatus utils.In
 		if ignoredErr == nil {
 			resp = secondResp
 			_ = resp.Body.Close()
+			httpStatus = resp.StatusCode
 			start = second
 		} else {
 			if strings.HasPrefix(url, "http://") {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/metacubex/mihomo/common/guard"
 	"github.com/metacubex/mihomo/common/utils"
 	mihomoHttp "github.com/metacubex/mihomo/component/http"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
@@ -36,6 +37,14 @@ func SetETag(b bool) {
 }
 
 func safeWrite(path string, buf []byte) error {
+	// mod: unified disk/network guard, see common/guard. Caching downloaded
+	// providers is a pure optimization; fail hard instead of pretending it was
+	// persisted. An error is returned as well so callers running without panic
+	// recovery (and tests) observe the refusal.
+	if !guard.DiskAllowed() {
+		guard.Refuse("disk", "writing provider cache "+path)
+		return guard.ErrDisabled
+	}
 	dir := filepath.Dir(path)
 
 	if _, err := os.Stat(dir); os.IsNotExist(err) {

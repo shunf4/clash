@@ -1,6 +1,6 @@
 module github.com/metacubex/mihomo
 
-go 1.22
+go 1.24.0
 
 toolchain go1.24.4
 
@@ -69,6 +69,7 @@ require (
 	go.uber.org/automaxprocs v1.6.0
 	go.yaml.in/yaml/v3 v3.0.5
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb
+	golang.org/x/sys v0.38.0
 )
 
 // lastest version compatible with golang1.20
@@ -82,7 +83,6 @@ require (
 	golang.org/x/exp v0.0.0-20240904232852-e7e105dedf7e
 	golang.org/x/net v0.35.0
 	golang.org/x/sync v0.11.0
-	golang.org/x/sys v0.30.0
 	google.golang.org/protobuf v1.34.2
 )
 

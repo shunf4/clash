@@ -257,26 +257,25 @@ func (ss *ShadowSocks) ListenPacketContext(ctx context.Context, metadata *C.Meta
 		defer func(c net.Conn) {
 			safeConnClose(c, err)
 		}(c)
-		if err = ss.ResolveUDP(ctx, metadata); err != nil {
-			return nil, err
-		}
-		destination := M.SocksaddrFromNet(metadata.UDPAddr())
+		// mod: remote UDP resolution. A domain name is kept as text for the UoT
+		// request; the destination of each packet still comes from the tunnel.
+		host, port := remoteUDPInitialTarget(metadata)
+		destination := M.ParseSocksaddrHostPort(host, port)
 		if ss.option.UDPOverTCPVersion == uot.LegacyVersion {
-			return NewPacketConn(N.NewThreadSafePacketConn(uot.NewConn(c, uot.Request{Destination: destination})), ss), nil
-		} else {
-			return NewPacketConn(N.NewThreadSafePacketConn(uot.NewLazyConn(c, uot.Request{Destination: destination})), ss), nil
+			return &ssRemoteUDPPacketConn{PacketConn: NewPacketConn(N.NewThreadSafePacketConn(uot.NewConn(c, uot.Request{Destination: destination})), ss)}, nil
 		}
+		return &ssRemoteUDPPacketConn{PacketConn: NewPacketConn(N.NewThreadSafePacketConn(uot.NewLazyConn(c, uot.Request{Destination: destination})), ss)}, nil
 	}
-	if err := ss.ResolveUDP(ctx, metadata); err != nil {
-		return nil, err
-	}
-
-	pc, addr, err := ss.listenPacketContext(ctx)
+	// mod: remote UDP resolution. The Shadowsocks packet conn encodes the bind
+	// address handed to bufio.NewBindPacketConn, which would hide the per packet
+	// domain name; restore it before the encoder runs.
+	pc, _, err := ss.listenPacketContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	pc = ss.method.DialPacketConn(bufio.NewBindPacketConn(pc, addr))
-	return NewPacketConn(pc, ss), nil
+	pc = ss.method.DialPacketConn(bufio.NewBindPacketConn(pc, remoteUDPBindAddr(metadata)))
+	pc = &remoteUDPNamePacketConn{EnhancePacketConn: N.NewEnhancePacketConn(pc)}
+	return &ssRemoteUDPPacketConn{PacketConn: NewPacketConn(pc, ss)}, nil
 }
 
 // ProxyInfo implements C.ProxyAdapter

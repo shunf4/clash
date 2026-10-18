@@ -501,7 +501,10 @@ func handleUDPConn(packet C.PacketAdapter) {
 
 			sender.AddMapping(originMetadata, dialMetadata)
 			oAddrPort := dialMetadata.AddrPort()
-			writeBackProxy := nat.NewWriteBackProxy(packet)
+			// mod: remote UDP resolution. Before the first outbound packet there is
+			// no per-packet write-back target, so let the proxy fall back to the
+			// original destination, which may keep the domain name intact.
+			writeBackProxy := nat.NewWriteBackProxyDefault(packet, packet)
 
 			go handleUDPToLocal(writeBackProxy, pc, sender, key, oAddrPort)
 			return pc, writeBackProxy, nil

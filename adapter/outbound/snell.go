@@ -131,9 +131,9 @@ func (s *Snell) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn
 
 // ListenPacketContext implements C.ProxyAdapter
 func (s *Snell) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (_ C.PacketConn, err error) {
-	if err = s.ResolveUDP(ctx, metadata); err != nil {
-		return nil, err
-	}
+	// mod: remote UDP resolution. Every Snell UDP packet carries its SOCKS5
+	// style destination address, so a domain name is forwarded to the upstream
+	// server instead of being resolved locally.
 	c, err := s.dialer.DialContext(ctx, "tcp", s.addr)
 	if err != nil {
 		return nil, err
@@ -149,7 +149,7 @@ func (s *Snell) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (
 	}
 
 	pc := snell.PacketConn(c)
-	return NewPacketConn(pc, s), nil
+	return &snellRemoteUDPPacketConn{PacketConn: NewPacketConn(pc, s)}, nil
 }
 
 // SupportUOT implements C.ProxyAdapter

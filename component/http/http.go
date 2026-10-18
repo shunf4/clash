@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/metacubex/mihomo/common/guard"
 	"github.com/metacubex/mihomo/component/ca"
 	"github.com/metacubex/mihomo/component/dialer"
 	C "github.com/metacubex/mihomo/constant"
@@ -30,6 +31,12 @@ func SetUA(UA string) {
 }
 
 func HttpRequest(ctx context.Context, url, method string, header map[string][]string, body io.Reader, options ...Option) (*http.Response, error) {
+	// mod: unified disk/network guard, see common/guard. Every mihomo initiated
+	// request (geo data, subscription and rule providers, UI and core update)
+	// goes through this function, so a single check covers them all.
+	if !guard.NetAllowed() {
+		guard.Refuse("network", "http request to "+url)
+	}
 	opt := option{}
 	for _, o := range options {
 		o(&opt)

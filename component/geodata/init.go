@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/common/atomic"
+	"github.com/metacubex/mihomo/common/guard"
 	mihomoHttp "github.com/metacubex/mihomo/component/http"
 	"github.com/metacubex/mihomo/component/mmdb"
 	C "github.com/metacubex/mihomo/constant"
@@ -69,6 +70,14 @@ func SetASNUrl(url string) {
 }
 
 func downloadToPath(url string, path string) (err error) {
+	// mod: unified disk/network guard, see common/guard. Geo data is lazily
+	// downloaded on first use; refuse loudly instead of leaving a half working
+	// instance behind. An error is returned as well so callers running without
+	// panic recovery (and tests) observe the refusal.
+	if !guard.DiskAllowed() || !guard.NetAllowed() {
+		guard.Refuse("disk/network", "downloading geo data "+url)
+		return guard.ErrDisabled
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*90)
 	defer cancel()
 	resp, err := mihomoHttp.HttpRequest(ctx, url, http.MethodGet, nil, nil)

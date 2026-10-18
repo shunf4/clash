@@ -4,12 +4,19 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/metacubex/mihomo/common/guard"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
 )
 
 // Init prepare necessary files
 func Init(dir string) error {
+	// mod: unified disk/network guard, see common/guard. Never create the home
+	// directory or a placeholder config file in deny mode.
+	if !guard.DiskAllowed() {
+		guard.Refuse("disk", "creating configuration directory "+dir)
+		return guard.ErrDisabled
+	}
 	// initial homedir
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		if err := os.MkdirAll(dir, 0o777); err != nil {

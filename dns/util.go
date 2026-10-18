@@ -152,8 +152,9 @@ lllll1:
 					ret = append(ret, &localResolveClient{})
 				case "dhcpNameserversClient":
 					ret = append(ret, &cachedNameserversClient{
-						cache:          lru.New[string, net.IP](lru.WithAge[string, net.IP](5)),
-						cacheTimeout:   5 * time.Second,
+						cache:          lru.New[string, net.IP](lru.WithAge[string, net.IP](300)),
+						cacheTimeout:   5 * time.Minute,
+						retryTimeout:   5 * time.Second,
 						lastNameserver: "",
 						clientName:     s.Addr,
 						getNameservers: func() (nameservers []string, err error) {
@@ -169,8 +170,9 @@ lllll1:
 					})
 				case "gatewaysClient":
 					ret = append(ret, &cachedNameserversClient{
-						cache:          lru.New[string, net.IP](lru.WithAge[string, net.IP](5)),
-						cacheTimeout:   5 * time.Second,
+						cache:          lru.New[string, net.IP](lru.WithAge[string, net.IP](300)),
+						cacheTimeout:   5 * time.Minute,
+						retryTimeout:   5 * time.Second,
 						lastNameserver: "",
 						clientName:     s.Addr,
 						getNameservers: func() (nameservers []string, err error) {

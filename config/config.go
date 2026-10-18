@@ -720,6 +720,9 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	}
 
 	publisherEverMatched := false
+	// mod: keeps track of user provided clashray names (lan contact names and
+	// reverse bridge rule names) so that duplicates/typos are reported eagerly.
+	clashrayUsedNames := map[string]string{}
 
 	for i := range config.Clashray.ClashrayNetPublishers {
 		p := &config.Clashray.ClashrayNetPublishers[i]
@@ -747,11 +750,33 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			}
 		}
 
+		// mod: validate the pre-rule (gate) conditions up front so that errors carry
+		// the publisher/field context. Parsing happens before the generated rules are
+		// handed to the rule engine.
+		if _, err := normalizeClashrayGate(p.VisitorPreRules, p.Name, "visitor-pre-rules"); err != nil {
+			return nil, err
+		}
+		if _, err := normalizeClashrayGate(p.PublisherPreRules, p.Name, "publisher-pre-rules"); err != nil {
+			return nil, err
+		}
+
 		currContactProxyGroupName := "clashray-net-" + p.Name + "-contact"
 		payloadConnNonLocalRuleName := "clashray-net-" + p.Name + "-payload-conn-non-local-rule"
 		payloadConnNonLocalFinalRuleName := "clashray-net-" + p.Name + "-payload-conn-non-local-rule-final"
 		payloadConnLocalOnlyRuleName := "clashray-net-" + p.Name + "-payload-conn-local-only-rule"
 		payloadConnLocalAndNonLocalFinalRuleName := "clashray-net-" + p.Name + "-payload-conn-local-and-non-local-rule-final"
+
+		// mod: keys that clashray itself already uses; user provided names (lan
+		// contact names, reverse bridge rule names) must not shadow them
+		for _, reserved := range []string{
+			currContactProxyGroupName,
+			payloadConnNonLocalRuleName,
+			payloadConnNonLocalFinalRuleName,
+			payloadConnLocalOnlyRuleName,
+			payloadConnLocalAndNonLocalFinalRuleName,
+		} {
+			clashrayUsedNames[reserved] = "clashray generated name"
+		}
 
 		visitorNotPublisherProxies := []map[string]any{}
 		visitorNotPublisherProxyGroups := []map[string]any{}
@@ -787,6 +812,23 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 				fullLanContact = *lc
 			}
 			currLanContactName := "clashray-net-" + p.Name + "-lan-contact-" + strconv.Itoa(lci)
+			// mod: lan-contacts[].name overrides the generated contact name (this is
+			// the name exposed as IN-NAME on both the visitor and publisher side)
+			if customName, ok := fullLanContact["name"]; ok {
+				nameStr, isStr := customName.(string)
+				if !isStr || strings.TrimSpace(nameStr) == "" {
+					return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s): LanContacts[%d]: name must be a non-empty string", p.Name, lci)
+				}
+				nameStr = strings.TrimSpace(nameStr)
+				if strings.Contains(nameStr, ":::") || strings.Contains(nameStr, ",") {
+					return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s): LanContacts[%d]: name %q must not contain \":::\" or \",\"", p.Name, lci, nameStr)
+				}
+				currLanContactName = nameStr
+			}
+			if prev, found := clashrayUsedNames[currLanContactName]; found {
+				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s): LanContacts[%d]: name %q conflicts with %s", p.Name, lci, currLanContactName, prev)
+			}
+			clashrayUsedNames[currLanContactName] = fmt.Sprintf("ClashrayNetPublishers(Name=%s).LanContacts[%d]", p.Name, lci)
 			fullLanContact["name"] = currLanContactName
 			visitorNotPublisherProxies = append(visitorNotPublisherProxies, fullLanContact)
 			visitorNotPublisherContactProxyGroup["proxies"] = append(visitorNotPublisherContactProxyGroup["proxies"].([]string), currLanContactName)
@@ -838,8 +880,19 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 					} else {
 						currLanContactListener["listen"] = fullLanContact["server"]
 					}
+					// mod: mirror the contact credentials onto the listener (users:),
+					// otherwise the auth-protected contact would be exposed without auth
+					username, _ := fullLanContact["username"].(string)
+					password, _ := fullLanContact["password"].(string)
+					if username != "" || password != "" {
+						currLanContactListener["users"] = []map[string]interface{}{
+							{"username": username, "password": password},
+						}
+					}
 				case "socks5":
-					currLanContactListener["type"] = "http"
+					// mod: was wrongly generated as an "http" listener, which silently
+					// dropped the udp field and broke socks5 contacts (incl. UDP)
+					currLanContactListener["type"] = "socks"
 					currLanContactListener["port"] = fullLanContact["port"]
 					if listenValue, ok := fullLanContact["publisherListen"]; ok {
 						currLanContactListener["listen"] = listenValue
@@ -850,6 +903,16 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 						currLanContactListener["udp"] = udpValue
 					} else {
 						currLanContactListener["udp"] = true
+					}
+					// mod: the listener side expects users: [{username,password}], while the
+					// contact is declared with outbound style username/password fields.
+					// Omitting users entirely means "no auth", an empty list means "reject all".
+					username, _ := fullLanContact["username"].(string)
+					password, _ := fullLanContact["password"].(string)
+					if username != "" || password != "" {
+						currLanContactListener["users"] = []map[string]interface{}{
+							{"username": username, "password": password},
+						}
 					}
 				default:
 					return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s): LanContacts[%d]: type is invalid (%s)", p.Name, lci, fullLanContact["type"])
@@ -864,6 +927,20 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 		for rci := range p.ReverseContacts {
 			rc := &p.ReverseContacts[rci]
 			publisherBridgeConnRuleName := "clashray-net-" + p.Name + "-bridge-conn-rule-" + strconv.Itoa(rci) + "-" + rc.BridgeConnProxy
+			// mod: reverse-contacts[].reverse-bridge-rule-name overrides the generated
+			// bridge-conn sub-rule name, which becomes "BridgeWithRule:<name>" in the
+			// publisher "PONG - Via" reply
+			if rc.ReverseBridgeRuleName != "" {
+				ruleName := strings.TrimSpace(rc.ReverseBridgeRuleName)
+				if ruleName == "" || strings.Contains(ruleName, ":::") || strings.Contains(ruleName, ",") {
+					return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).ReverseContacts[%d]: reverse-bridge-rule-name %q must not contain \":::\" or \",\"", p.Name, rci, rc.ReverseBridgeRuleName)
+				}
+				publisherBridgeConnRuleName = ruleName
+			}
+			if prev, found := clashrayUsedNames[publisherBridgeConnRuleName]; found {
+				return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).ReverseContacts[%d]: reverse-bridge-rule-name %q conflicts with %s", p.Name, rci, publisherBridgeConnRuleName, prev)
+			}
+			clashrayUsedNames[publisherBridgeConnRuleName] = fmt.Sprintf("ClashrayNetPublishers(Name=%s).ReverseContacts[%d]", p.Name, rci)
 			{
 				visitorProxy := rc.VisitorProxy
 				if visitorProxy == "" {
@@ -903,6 +980,16 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 		visitorNotPublisherCORSAllowed := []string{}
 		publisherCORSAllowed := []string{}
+
+		// mod: resolved per-role pre-rule conditions, see normalizeClashrayGate
+		visitorGate, err := normalizeClashrayGate(p.VisitorPreRules, p.Name, "visitor-pre-rules")
+		if err != nil {
+			return nil, err
+		}
+		publisherGate, err := normalizeClashrayGate(p.PublisherPreRules, p.Name, "publisher-pre-rules")
+		if err != nil {
+			return nil, err
+		}
 
 		for si := range p.Services {
 			s := p.Services[si]
@@ -944,7 +1031,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 				if isLocalOnly {
 					return nil, fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).Services: bad service line, conflicts: LOCAL-ONLY and BLANKET-FORWARD", p.Name)
 				} else {
-					visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, currContactProxyGroupName))
+					visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, withClashrayGate(sMatchCond+","+sHost, currContactProxyGroupName, visitorGate))
 				}
 			} else {
 				sRealDestAddr := sParts[3]
@@ -961,10 +1048,10 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 				}
 
 				if isLocalOnly {
-					publisherLocalOnlyPayloadConnSvcRules = append(publisherLocalOnlyPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort))
+					publisherLocalOnlyPayloadConnSvcRules = append(publisherLocalOnlyPayloadConnSvcRules, withClashrayGate(sMatchCond+","+sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort, publisherGate))
 				} else {
-					visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, currContactProxyGroupName))
-					publisherNonLocalPayloadConnSvcRules = append(publisherNonLocalPayloadConnSvcRules, fmt.Sprintf("%s,%s,%s", sMatchCond, sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort))
+					visitorNotPublisherPayloadConnSvcRules = append(visitorNotPublisherPayloadConnSvcRules, withClashrayGate(sMatchCond+","+sHost, currContactProxyGroupName, visitorGate))
+					publisherNonLocalPayloadConnSvcRules = append(publisherNonLocalPayloadConnSvcRules, withClashrayGate(sMatchCond+","+sHost, sRealDestProxy+":::"+sRealDestHost+sRealDestPort, publisherGate))
 				}
 
 				if sRealDestProxy == "INTERNAL-HTTP" && sRealDestHost == "CLASHRAY-SEND" {
@@ -1031,7 +1118,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 								currListener["type"] = "tunnel"
 								currListener["listen"] = vtListenHost
 								currListener["port"] = vtListenPort
-								currListener["network"] = []string{"tcp"}
+								currListener["network"] = []string{"tcp", "udp"}
 								currListener["target"] = sHost + ":" + vtListenPortStr
 								currListener["rule"] = payloadConnNonLocalFinalRuleName
 
@@ -1046,7 +1133,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 							currListener["type"] = "tunnel"
 							currListener["listen"] = vtListenHost
 							currListener["port"] = vtListenPort
-							currListener["network"] = []string{"tcp"}
+							currListener["network"] = []string{"tcp", "udp"}
 							currListener["target"] = sHost + ":" + vtListenPortStr
 							currListener["rule"] = payloadConnLocalAndNonLocalFinalRuleName
 
@@ -1063,19 +1150,31 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 						if !isLocalOnly {
 							visitorNotPublisherPayloadConnSvcRules = append(
 								visitorNotPublisherPayloadConnSvcRules,
-								"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+currContactProxyGroupName+":::"+sHost,
+								withClashrayGate(
+									"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+"))",
+									currContactProxyGroupName+":::"+sHost,
+									visitorGate,
+								),
 							)
 						}
 						if sRealDestHost != "BLANKET-FORWARD" {
 							if !isLocalOnly {
 								publisherNonLocalPayloadConnSvcRules = append(
 									publisherNonLocalPayloadConnSvcRules,
-									"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
+									withClashrayGate(
+										"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+"))",
+										sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
+										publisherGate,
+									),
 								)
 							} else {
 								publisherLocalOnlyPayloadConnSvcRules = append(
 									publisherLocalOnlyPayloadConnSvcRules,
-									"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+")),"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
+									withClashrayGate(
+										"AND,((IP-CIDR,"+vtListenHost+"/32,no-resolve),(DST-PORT,"+vtListenPortStr+"))",
+										sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
+										publisherGate,
+									),
 								)
 							}
 						}
@@ -1083,19 +1182,31 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 						if !isLocalOnly {
 							visitorNotPublisherPayloadConnSvcRules = append(
 								visitorNotPublisherPayloadConnSvcRules,
-								"IP-CIDR,"+vtListenHost+"/32,"+currContactProxyGroupName+":::"+sHost+",no-resolve",
+								withClashrayGateNoResolve(
+									vtListenHost+"/32",
+									currContactProxyGroupName+":::"+sHost,
+									visitorGate,
+								),
 							)
 						}
 						if sRealDestHost != "BLANKET-FORWARD" {
 							if !isLocalOnly {
 								publisherNonLocalPayloadConnSvcRules = append(
 									publisherNonLocalPayloadConnSvcRules,
-									"IP-CIDR,"+vtListenHost+"/32,"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort+",no-resolve",
+									withClashrayGateNoResolve(
+										vtListenHost+"/32",
+										sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
+										publisherGate,
+									),
 								)
 							} else {
 								publisherLocalOnlyPayloadConnSvcRules = append(
 									publisherLocalOnlyPayloadConnSvcRules,
-									"IP-CIDR,"+vtListenHost+"/32,"+sRealDestProxy+":::"+sRealDestHost+sRealDestPort+",no-resolve",
+									withClashrayGateNoResolve(
+										vtListenHost+"/32",
+										sRealDestProxy+":::"+sRealDestHost+sRealDestPort,
+										publisherGate,
+									),
 								)
 							}
 						}
@@ -1119,11 +1230,11 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 						if !isLocalOnly {
 							visitorNotPublisherHTTPRedirectMap[httpRedirectHost] = "auto-added:" + httpRedirectTarget
-							visitorNotPublisherPayloadConnHTTPRedirectRules = append(visitorNotPublisherPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
+							visitorNotPublisherPayloadConnHTTPRedirectRules = append(visitorNotPublisherPayloadConnHTTPRedirectRules, withClashrayGate("DOMAIN,"+httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT", visitorGate))
 						}
 
 						publisherAlsoVisitorHTTPRedirectMap[httpRedirectHost] = "auto-added:" + httpRedirectTarget
-						publisherAlsoVisitorPayloadConnHTTPRedirectRules = append(publisherAlsoVisitorPayloadConnHTTPRedirectRules, fmt.Sprintf("%s,%s,%s", "DOMAIN", httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT"))
+						publisherAlsoVisitorPayloadConnHTTPRedirectRules = append(publisherAlsoVisitorPayloadConnHTTPRedirectRules, withClashrayGate("DOMAIN,"+httpRedirectHost, "INTERNAL-HTTP:::CLASHRAY-HTTP-REDIRECT", publisherGate))
 					}
 				}
 				if pm, ok := strings.CutPrefix(opt, "portmap="); ok {
@@ -1162,15 +1273,16 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 					if pmFromPort > 0 && pmToPort > 0 {
 						if sRealDestHost != "BLANKET-FORWARD" {
+							pmCond := fmt.Sprintf("AND,((%s,%s),(DST-PORT,%s))", sMatchCond, sHost, pmFromPortStr)
 							if isLocalOnly {
 								publisherLocalOnlyPayloadConnSvcRules_pre1 = append(
 									publisherLocalOnlyPayloadConnSvcRules_pre1,
-									fmt.Sprintf("AND,((%s,%s),(DST-PORT,%s)),%s", sMatchCond, sHost, pmFromPortStr, sRealDestProxy+":::"+sRealDestHost+":::"+pmToPortStr),
+									withClashrayGate(pmCond, sRealDestProxy+":::"+sRealDestHost+":::"+pmToPortStr, publisherGate),
 								)
 							} else {
 								publisherNonLocalPayloadConnSvcRules_pre1 = append(
 									publisherNonLocalPayloadConnSvcRules_pre1,
-									fmt.Sprintf("AND,((%s,%s),(DST-PORT,%s)),%s", sMatchCond, sHost, pmFromPortStr, sRealDestProxy+":::"+sRealDestHost+":::"+pmToPortStr),
+									withClashrayGate(pmCond, sRealDestProxy+":::"+sRealDestHost+":::"+pmToPortStr, publisherGate),
 								)
 							}
 						}
@@ -1211,8 +1323,12 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 		payloadConnNonLocalSubRule := []string{}
 		payloadConnLocalOnlySubRule := []string{}
-		payloadConnNonLocalFinalSubRule := []string{"SUB-RULE,(NETWORK,tcp)," + payloadConnNonLocalRuleName, "MATCH,REJECT"}
-		payloadConnLocalAndNonLocalFinalSubRule := []string{"SUB-RULE,(NETWORK,tcp)," + payloadConnLocalOnlyRuleName, "SUB-RULE,(NETWORK,tcp)," + payloadConnNonLocalRuleName, "MATCH,REJECT"}
+		// mod: clashray payload rules cover both TCP and UDP now. The plain form
+		// "SUB-RULE,X" is not valid (X would be parsed as a rule type), so a
+		// condition is always required; OR keeps it on a single line.
+		const tcpOrUdpCondition = "(OR,((NETWORK,tcp),(NETWORK,udp)))"
+		payloadConnNonLocalFinalSubRule := []string{"SUB-RULE," + tcpOrUdpCondition + "," + payloadConnNonLocalRuleName, "MATCH,REJECT"}
+		payloadConnLocalAndNonLocalFinalSubRule := []string{"SUB-RULE," + tcpOrUdpCondition + "," + payloadConnLocalOnlyRuleName, "SUB-RULE," + tcpOrUdpCondition + "," + payloadConnNonLocalRuleName, "MATCH,REJECT"}
 
 		publisherAction := func() {
 			maps.Copy(rawCfg.SubRules, publisherBridgeConnRules)
@@ -1251,7 +1367,7 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 			addPayloadNonLocalRulesAction()
 
-			rawCfg.Rule = append([]string{"SUB-RULE,(NETWORK,tcp)," + payloadConnNonLocalRuleName}, rawCfg.Rule...)
+			rawCfg.Rule = append([]string{"SUB-RULE," + tcpOrUdpCondition + "," + payloadConnNonLocalRuleName}, rawCfg.Rule...)
 			maps.Copy(config.Clashray.ClashrayHTTPRedirectMap, visitorNotPublisherHTTPRedirectMap)
 			if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
 				rawCfg.Listeners = append(rawCfg.Listeners, visitorNotPublisherVisitorTunnelListeners...)
@@ -1273,8 +1389,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 			rawCfg.SubRules[payloadConnLocalAndNonLocalFinalRuleName] = payloadConnLocalAndNonLocalFinalSubRule
 
 			rawCfg.Rule = append([]string{
-				"SUB-RULE,(NETWORK,tcp)," + payloadConnLocalOnlyRuleName,
-				"SUB-RULE,(NETWORK,tcp)," + payloadConnNonLocalRuleName,
+				"SUB-RULE," + tcpOrUdpCondition + "," + payloadConnLocalOnlyRuleName,
+				"SUB-RULE," + tcpOrUdpCondition + "," + payloadConnNonLocalRuleName,
 			}, rawCfg.Rule...)
 			maps.Copy(config.Clashray.ClashrayHTTPRedirectMap, publisherAlsoVisitorHTTPRedirectMap)
 			if !config.Clashray.ClashrayNetVisitorTunnelNoHostsNorListening {
@@ -1431,6 +1547,27 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 	config.Clashray.ClashrayTestCORSAllowedOrigins = append(config.Clashray.ClashrayTestCORSAllowedOrigins, "test.clashray.home.arpa")
 	rawCfg.ClashrayTestCORSAllowedOrigins = append(rawCfg.ClashrayTestCORSAllowedOrigins, "send.clashray.home.arpa")
 	config.Clashray.ClashrayTestCORSAllowedOrigins = append(config.Clashray.ClashrayTestCORSAllowedOrigins, "send.clashray.home.arpa")
+
+	// mod: hosts the send server may be addressed as (Host allow list, see
+	// tunnel/internalhttp_guard.go). Every service mapped to CLASHRAY-SEND and
+	// every contact-send-url host is included.
+	sendAllowedHosts := []string{}
+	for _, p := range config.Clashray.ClashrayNetPublishers {
+		if h := strings.TrimPrefix(strings.TrimSpace(p.ContactSendURL), "http://"); h != "" {
+			sendAllowedHosts = append(sendAllowedHosts, h)
+		}
+		for _, s := range p.Services {
+			s = strings.TrimPrefix(s, "LOCAL-ONLY,")
+			sParts := strings.Split(s, ",")
+			if len(sParts) < 4 {
+				continue
+			}
+			if strings.TrimSpace(sParts[2]) == "INTERNAL-HTTP" && strings.TrimSpace(sParts[3]) == "CLASHRAY-SEND" {
+				sendAllowedHosts = append(sendAllowedHosts, strings.TrimPrefix(strings.TrimSpace(sParts[1]), "."))
+			}
+		}
+	}
+	config.Clashray.ClashraySendAllowedHosts = sendAllowedHosts
 
 	////// shunf4 mod: clashray-net: end
 
@@ -1756,6 +1893,85 @@ func parseTLS(cfg *RawConfig) (*TLS, error) {
 		EchKey:          cfg.TLS.EchKey,
 		CustomTrustCert: cfg.TLS.CustomTrustCert,
 	}, nil
+}
+
+// mod: clashray pre-rule (gate) helpers.
+//
+// A gate is a single condition rule string, e.g. "IN-TYPE,HTTP/HTTPS/TUNNEL" or
+// "AND,((IN-TYPE,TUN)),((NETWORK,tcp))". It is merged into the AND condition of the
+// generated service rules, so a rule only matches when both the service condition
+// and the gate match; otherwise the packet falls through to the following rules.
+
+func normalizeClashrayGate(gate, publisherName, field string) (string, error) {
+	gate = strings.TrimSpace(gate)
+	if gate == "" {
+		return "", nil
+	}
+
+	// Accept both "IN-TYPE,TUN" and "(IN-TYPE,TUN)" by stripping one balanced pair
+	// of surrounding parentheses.
+	if strings.HasPrefix(gate, "(") && strings.HasSuffix(gate, ")") && isSingleBalancedParenthesis(gate) {
+		inner := strings.TrimSpace(gate[1 : len(gate)-1])
+		if inner != "" {
+			gate = inner
+		}
+	}
+
+	upper := strings.ToUpper(gate)
+	if strings.HasPrefix(upper, "MATCH,") || strings.HasPrefix(upper, "MATCH ") || strings.HasPrefix(upper, "SUB-RULE,") {
+		return "", fmt.Errorf("config.Clashray.ClashrayNetPublishers(Name=%s).%s: only condition rules are allowed, got %q", publisherName, field, gate)
+	}
+	return gate, nil
+}
+
+// isSingleBalancedParenthesis reports whether s starts with '(' and ends with the
+// matching ')' and nothing closes earlier.
+func isSingleBalancedParenthesis(s string) bool {
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && i != len(s)-1 {
+				return false
+			}
+		}
+		if depth < 0 {
+			return false
+		}
+	}
+	return depth == 0
+}
+
+// withClashrayGateNoResolve is the variant for rules whose trailing parameter
+// ("no-resolve") must stay after the target when there is no gate.
+func withClashrayGateNoResolve(cidr, target, gate string) string {
+	if gate == "" {
+		return "IP-CIDR," + cidr + "," + target + ",no-resolve"
+	}
+	return "AND,((IP-CIDR," + cidr + ",no-resolve),(" + gate + "))," + target
+}
+
+// withClashrayGate merges cond with the optional gate into a single AND condition.
+// The result is a rule of the form "AND,((cond)[,(gate)]),target"; when gate is
+// empty the original simple form "cond,target" is returned, guaranteeing
+// byte-for-byte compatibility with configs that don't use pre-rules.
+func withClashrayGate(cond, target, gate string) string {
+	inner := cond
+	if strings.HasPrefix(strings.ToUpper(cond), "AND,") && strings.HasPrefix(cond[len("AND,"):], "(") {
+		// AND,((a),(b)) -> ((a),(b))
+		inner = cond[len("AND,"):]
+	}
+	if gate == "" {
+		if inner == cond {
+			return cond + "," + target
+		}
+		return "AND," + inner + "," + target
+	}
+	inner = strings.TrimSuffix(inner, ")")
+	return "AND," + inner + ",(" + gate + "))," + target
 }
 
 func parseProxies(cfg *RawConfig) (proxies map[string]C.Proxy, providersMap map[string]P.ProxyProvider, err error) {

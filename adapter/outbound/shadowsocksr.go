@@ -81,9 +81,9 @@ func (ssr *ShadowSocksR) DialContext(ctx context.Context, metadata *C.Metadata) 
 
 // ListenPacketContext implements C.ProxyAdapter
 func (ssr *ShadowSocksR) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (C.PacketConn, error) {
-	if err := ssr.ResolveUDP(ctx, metadata); err != nil {
-		return nil, err
-	}
+	// mod: remote UDP resolution. Every SSR UDP packet carries its SOCKS5 style
+	// destination address, so a domain name is forwarded to the upstream server
+	// instead of being resolved locally.
 	addr, err := resolveUDPAddr(ctx, "udp", ssr.addr, ssr.prefer)
 	if err != nil {
 		return nil, err
@@ -96,7 +96,8 @@ func (ssr *ShadowSocksR) ListenPacketContext(ctx context.Context, metadata *C.Me
 
 	epc := ssr.cipher.PacketConn(N.NewEnhancePacketConn(pc))
 	epc = ssr.protocol.PacketConn(epc)
-	return NewPacketConn(&ssrPacketConn{EnhancePacketConn: epc, rAddr: addr}, ssr), nil
+	// mod: remote UDP resolution, see the comment above.
+	return &ssrRemoteUDPPacketConn{PacketConn: NewPacketConn(&ssrPacketConn{EnhancePacketConn: epc, rAddr: addr}, ssr)}, nil
 }
 
 // ProxyInfo implements C.ProxyAdapter

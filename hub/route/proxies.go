@@ -3,9 +3,11 @@ package route
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
+	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/adapter/outboundgroup"
 	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
@@ -51,6 +53,11 @@ func findProxyByName(next http.Handler) http.Handler {
 		proxies := tunnel.Proxies()
 		proxy, exist := proxies[name]
 		if !exist {
+			// mod: resolve proxies coming from proxy providers too, so that
+			// /proxies/{name}/delay and /proxies/{name} also work for subscription nodes
+			proxy, exist = findProviderProxy(r, name)
+		}
+		if !exist {
 			render.Status(r, http.StatusNotFound)
 			render.JSON(w, r, ErrNotFound)
 			return
@@ -59,6 +66,58 @@ func findProxyByName(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), CtxKeyProxy, proxy)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// mod: find a proxy inside the configured proxy providers.
+// The reserved "default" provider is skipped: it aggregates every proxy (including
+// groups) and would shadow or conflict with the main proxy table.
+// An optional ?provider=<name> query narrows the lookup when names collide.
+func findProviderProxy(r *http.Request, name string) (C.Proxy, bool) {
+	const reservedProviderName = "default"
+	providers := tunnel.Providers()
+	if wanted := r.URL.Query().Get("provider"); wanted != "" {
+		pd, ok := providers[wanted]
+		if !ok || wanted == reservedProviderName {
+			return nil, false
+		}
+		for _, p := range pd.Proxies() {
+			if p.Name() == name {
+				return p, true
+			}
+		}
+		return nil, false
+	}
+
+	names := make([]string, 0, len(providers))
+	for pn := range providers {
+		if pn == reservedProviderName {
+			continue
+		}
+		names = append(names, pn)
+	}
+	sort.Strings(names)
+
+	var (
+		found   C.Proxy
+		foundIn []string
+	)
+	for _, pn := range names {
+		for _, p := range providers[pn].Proxies() {
+			if p.Name() == name {
+				if found == nil {
+					found = p
+				}
+				foundIn = append(foundIn, pn)
+			}
+		}
+	}
+	if found == nil {
+		return nil, false
+	}
+	if len(foundIn) > 1 {
+		log.Warnln("proxy %q exists in multiple providers %v, using the one from %q; add ?provider=<name> to disambiguate", name, foundIn, foundIn[0])
+	}
+	return found, true
 }
 
 func getProxies(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +177,6 @@ func getProxyDelay(w http.ResponseWriter, r *http.Request) {
 	if url == "" {
 		url = "https://www.googleapis.com/auth/documents"
 	}
-	log.Infoln("proxy delay test url: " + url)
 	timeout, err := strconv.ParseInt(query.Get("timeout"), 10, 16)
 	if err != nil {
 		render.Status(r, http.StatusBadRequest)
@@ -135,8 +193,15 @@ func getProxyDelay(w http.ResponseWriter, r *http.Request) {
 
 	proxy := r.Context().Value(CtxKeyProxy).(C.Proxy)
 
+	// mod: one start log line per explicit delay test, the matching finish line
+	// is emitted by adapter.Proxy.URLTest (see adapter/delaylog.go)
+	_, isGroup := proxy.Adapter().(outboundgroup.ProxyGroup)
+	log.Infoln("[DelayTest] request proxy=%q type=%s group=%t url=%q timeout=%dms expected=%q",
+		proxy.Name(), proxy.Type().String(), isGroup, url, timeout, expectedStatus.String())
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(timeout))
 	defer cancel()
+	ctx = adapter.WithDelayTestLog(ctx)
 
 	delay, err := proxy.URLTest(ctx, url, expectedStatus)
 	if ctx.Err() != nil {

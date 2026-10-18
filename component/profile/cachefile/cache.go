@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/component/profile"
+	"github.com/metacubex/mihomo/common/guard"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
 
@@ -78,6 +79,15 @@ func (c *CacheFile) Close() error {
 }
 
 func initCache() {
+	// mod: unified disk/network guard, see common/guard. In deny mode the cache
+	// database is never opened or created. Every CacheFile method (and the
+	// fake-ip store built on top of it) already treats a nil DB as "no cache",
+	// so an empty struct is a safe, transparent stand-in.
+	if !guard.DiskAllowed() {
+		defaultCache = &CacheFile{}
+		return
+	}
+
 	options := bbolt.Options{Timeout: time.Second, NoStatistics: true}
 	db, err := bbolt.Open(C.Path.Cache(), fileMode, &options)
 	switch err {

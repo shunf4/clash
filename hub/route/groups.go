@@ -9,6 +9,7 @@ import (
 	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel"
 
 	"github.com/metacubex/chi"
@@ -82,6 +83,10 @@ func getGroupDelay(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), time.Millisecond*time.Duration(timeout))
 	defer cancel()
+
+	// mod: group fan-out tests log their finish lines through adapter.URLTest
+	log.Infoln("[DelayTest] request proxy=%q type=%s group=true url=%q timeout=%dms expected=%q (group fan-out)",
+		proxy.Name(), proxy.Type().String(), url, timeout, expectedStatus.String())
 
 	dm, err := group.URLTest(ctx, url, expectedStatus)
 	if err != nil {

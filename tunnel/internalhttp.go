@@ -24,7 +24,6 @@ import (
 	"github.com/aohorodnyk/mimeheader"
 	"github.com/flytam/filenamify"
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/go-chi/render"
 	"github.com/gofrs/uuid/v5"
@@ -191,7 +190,9 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 		}
 
 		internalHTTPClashraySend = chi.NewRouter()
-		internalHTTPClashraySend.Use(middleware.Logger)
+		internalHTTPClashraySend.Use(chiLogToMihomo("clashraySend"))
+		setClashraySendHostAllowlist(buildClashraySendAllowlist(clashrayConfig, clashrayConfig.ClashraySendAllowedHosts))
+		internalHTTPClashraySend.Use(clashraySendGuard)
 
 		internalHTTPClashraySend.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -546,15 +547,15 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 		internalHTTPClashraySend.Get("/file/*", neuter(http.StripPrefix("/file/", http.FileServer(http.Dir(clashrayConfig.ClashraySendDir)))).ServeHTTP)
 	} else {
 		internalHTTPClashraySend = chi.NewRouter()
-		internalHTTPClashraySend.Use(middleware.Logger)
+		internalHTTPClashraySend.Use(chiLogToMihomo("clashraySend"))
 		internalHTTPClashraySend.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			internalHttpError(w, r, http.StatusForbidden, "Clashray Send Not Available")
 		}))
 	}
 
 	internalHTTPClashrayHTTPRedirect = chi.NewRouter()
-	internalHTTPClashrayHTTPRedirect.Use(middleware.Logger)
-	internalHTTPClashrayHTTPRedirect.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+	internalHTTPClashrayHTTPRedirect.Use(chiLogToMihomo("clashrayRedirect"))
+	redirectHandler := func(w http.ResponseWriter, r *http.Request) {
 		// From https://github.com/go-chi/hostrouter/blob/master/hostrouter.go
 		parseForwarded := func(forwarded string) (addr, proto, host string) {
 			if forwarded == "" {
@@ -599,28 +600,47 @@ func RefreshInternalHTTP(clashrayConfig *Clashray) {
 		}
 
 		rHost := requestHost(r)
-		targetHost, found := clashrayConfig.ClashrayHTTPRedirectMap[rHost]
+		targetHost, found := lookupClashrayHTTPRedirect(rHost)
 
 		if !found || targetHost == "" {
 			internalHttpError(w, r, http.StatusInternalServerError, "Redirect URL not found")
 			return
 		}
-		targetHost = strings.TrimPrefix(targetHost, "no-hosts:")
-		targetHost = strings.TrimPrefix(targetHost, "no-hosts-nor-rule:")
-		targetHost = strings.TrimPrefix(targetHost, "auto-added:")
-		targetHost = strings.TrimPrefix(targetHost, "no-rule:")
+		targetHost = stripClashrayRedirectPrefixes(targetHost)
 		targetURL := targetHost
 		hasHttps := strings.HasPrefix(targetHost, "https://") || strings.HasPrefix(targetHost, "ftp://")
 		if !hasHttps {
 			targetURL = "http://" + strings.TrimPrefix(targetHost, "http://")
 		}
-		targetURL = strings.TrimSuffix(targetURL, "/")
-		http.Redirect(w, r, targetURL+r.URL.RequestURI(), http.StatusTemporaryRedirect)
 
+		// mod: merge the configured path/query with the incoming request instead of
+		// blindly concatenating RequestURI (which broke targets carrying a query).
+		parsedTarget, err := url.Parse(targetURL)
+		if err != nil || parsedTarget.Host == "" {
+			internalHttpError(w, r, http.StatusInternalServerError, "Redirect URL is invalid: %s", targetURL)
+			return
+		}
+		// url.URL.Path holds the decoded form; String() re-escapes it.
+		// r.URL.Path is already decoded ("%2F" in the raw request becomes "/"),
+		// which is what a path merge means anyway.
+		parsedTarget.Path = joinURLPaths(parsedTarget.Path, r.URL.Path)
+		parsedTarget.RawPath = ""
+		parsedTarget.RawQuery = mergeRawQuery(parsedTarget.RawQuery, r.URL.RawQuery)
+		parsedTarget.Fragment = ""
+		finalURL := parsedTarget.String()
+
+		log.Debugln("internalHTTP: clashrayRedirect %s %s -> %s", rHost, r.URL.RequestURI(), finalURL)
+		http.Redirect(w, r, finalURL, http.StatusTemporaryRedirect)
+	}
+	internalHTTPClashrayHTTPRedirect.Get("/*", redirectHandler)
+	internalHTTPClashrayHTTPRedirect.Head("/*", redirectHandler)
+	internalHTTPClashrayHTTPRedirect.Options("/*", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	internalHTTPClashrayTest = chi.NewRouter()
-	internalHTTPClashrayTest.Use(middleware.Logger)
+	internalHTTPClashrayTest.Use(chiLogToMihomo("clashrayTest"))
 	internalHTTPClashrayTest.Use(cors.Handler(cors.Options{
 		// AllowedOrigins: []string{"https://*", "http://*"},
 		AllowedOrigins: corsAllowedOrigins,
@@ -661,7 +681,8 @@ func internalHttpError(w http.ResponseWriter, r *http.Request, status int, error
 		userMsg = m
 	}
 	log.Warnln("internalHTTP: " + m)
-	render.Status(r, http.StatusBadRequest)
+	// mod: honour the requested status instead of always answering 400
+	render.Status(r, status)
 	render.JSON(w, r, userMsg)
 }
 

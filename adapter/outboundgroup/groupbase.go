@@ -248,6 +248,9 @@ func (gb *GroupBase) URLTest(ctx context.Context, url string, expectedStatus uti
 				lock.Lock()
 				mp[proxy.Name()] = delay
 				lock.Unlock()
+			} else {
+				// mod: don't drop the per-member reason silently
+				log.Debugln("[DelayTest] group %q member %q url=%q failed: %v", gb.Name(), proxy.Name(), url, err)
 			}
 
 			wg.Done()

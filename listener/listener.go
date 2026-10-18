@@ -689,6 +689,17 @@ func PatchInboundListeners(newListenerMap map[string]C.InboundListener, tunnel C
 	}
 }
 
+// mod: add an accessor for the listeners created by PatchInboundListeners, so
+// frontends can verify that a listener is really serving (the core only logs
+// listener failures and keeps running).
+// GetInboundListener returns the inbound listener registered under name.
+func GetInboundListener(name string) (C.InboundListener, bool) {
+	inboundMux.Lock()
+	defer inboundMux.Unlock()
+	listener, ok := inboundListeners[name]
+	return listener, ok
+}
+
 // GetPorts return the ports of proxy servers
 func GetPorts() *Ports {
 	ports := &Ports{}

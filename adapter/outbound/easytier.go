@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/metacubex/mihomo/common/guard"
 	"github.com/metacubex/mihomo/component/easytier"
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
@@ -282,6 +283,13 @@ func (e *EasyTier) loop() {
 }
 
 func (e *EasyTier) init() error {
+	// mod: unified disk/network guard, see common/guard. EasyTier keeps its
+	// state on disk (and talks to its network) as part of the proxy itself, so
+	// deny mode cannot support it.
+	if !guard.DiskAllowed() || !guard.NetAllowed() {
+		guard.Refuse("disk/network", "starting easytier outbound "+e.Name())
+		return guard.ErrDisabled
+	}
 	if err := os.MkdirAll(e.stateDir, 0o755); err != nil {
 		return fmt.Errorf("easytier: create state-dir: %w", err)
 	}

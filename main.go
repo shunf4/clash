@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/metacubex/mihomo/common/cmd"
+	gostcmd "github.com/metacubex/mihomo/cmd/gost"
 	"github.com/metacubex/mihomo/component/age"
 	"github.com/metacubex/mihomo/component/generator"
 	"github.com/metacubex/mihomo/component/geodata"
@@ -59,6 +60,12 @@ func getIntEnv(key string) int {
 }
 
 func init() {
+	// mod: subcommands that take their own flags must be dispatched before the
+	// global flag set parses the command line, otherwise flags like -L of
+	// `mhm gost` are rejected as undefined global flags.
+	if isSubCommand(os.Args) {
+		return
+	}
 	flag.StringVar(&homeDir, "d", os.Getenv("CLASH_HOME_DIR"), "set configuration directory")
 	flag.StringVar(&configFile, "f", os.Getenv("CLASH_CONFIG_FILE"), "specify configuration file")
 	flag.StringVar(&configString, "config", os.Getenv("CLASH_CONFIG_STRING"), "specify base64-encoded configuration string")
@@ -77,6 +84,19 @@ func init() {
 	flag.BoolVar(&version, "v", false, "show current version of mihomo")
 	flag.BoolVar(&testConfig, "t", false, "test configuration and exit")
 	flag.Parse()
+}
+
+// mod: subcommands own their command line (see init). The names must stay in
+// sync with the dispatch in main.
+var subCommands = map[string]bool{
+	"gost":            true,
+	"generate":        true,
+	"age":             true,
+	"convert-ruleset": true,
+}
+
+func isSubCommand(args []string) bool {
+	return len(args) > 1 && subCommands[args[1]]
 }
 
 func main() {
@@ -99,6 +119,11 @@ func main() {
 	}
 
 	_, _ = maxprocs.Set(maxprocs.Logger(func(string, ...any) {}))
+
+	if len(os.Args) > 1 && os.Args[1] == "gost" {
+		gostcmd.Main(os.Args[2:])
+		return
+	}
 
 	if len(os.Args) > 1 && os.Args[1] == "convert-ruleset" {
 		provider.ConvertMain(os.Args[2:])

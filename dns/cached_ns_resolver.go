@@ -20,6 +20,7 @@ type cachedNameserversClient struct {
 	mu             sync.Mutex
 	clientName     string
 	cacheTimeout   time.Duration
+	retryTimeout   time.Duration
 	overridePort   string
 	getNameservers func() (nameservers []string, err error)
 }
@@ -55,19 +56,20 @@ func (cnc *cachedNameserversClient) ExchangeContext(ctx context.Context, m *D.Ms
 
 		nameservers, err := cnc.getNameservers()
 		if err != nil {
+			cnc.mu.Unlock()
 			return nil, err
 		}
 		if len(nameservers) == 0 {
 			if cnc.lastNameserver == "" {
 				err := fmt.Errorf("%s: No nameserver was fetched, storing <IPv4zero> into cache", cnc.clientName)
 				log.Warnln(err.Error())
-				cnc.cache.SetWithExpire(cnc.clientName, net.IPv4zero, time.Now().Add(cnc.cacheTimeout))
+				cnc.cache.SetWithExpire(cnc.clientName, net.IPv4zero, time.Now().Add(cnc.retryTimeout))
 				cnc.mu.Unlock()
 				return nil, err
 			} else {
 				err := fmt.Errorf("%s: No nameserver was fetched, storing <IPv4zero> into cache. Using lastNameserver %s", cnc.clientName, cnc.lastNameserver)
 				log.Warnln(err.Error())
-				cnc.cache.SetWithExpire(cnc.clientName, net.IPv4zero, time.Now().Add(cnc.cacheTimeout))
+				cnc.cache.SetWithExpire(cnc.clientName, net.IPv4zero, time.Now().Add(cnc.retryTimeout))
 				ipStr = cnc.lastNameserver
 			}
 		} else {
@@ -76,14 +78,14 @@ func (cnc *cachedNameserversClient) ExchangeContext(ctx context.Context, m *D.Ms
 				if cnc.lastNameserver == "" {
 					err := fmt.Errorf("%s: IP string is empty, storing <IPv4zero> into cache", cnc.clientName)
 					log.Warnln(err.Error())
-					cnc.cache.SetWithExpire(cnc.clientName, net.IPv4zero, time.Now().Add(cnc.cacheTimeout))
+					cnc.cache.SetWithExpire(cnc.clientName, net.IPv4zero, time.Now().Add(cnc.retryTimeout))
 					cnc.mu.Unlock()
 					return nil, err
 				} else {
 					err := fmt.Errorf("%s: IP string is empty, storing <IPv4zero> into cache. Using lastNameserver %s", cnc.clientName, cnc.lastNameserver)
 					log.Warnln(err.Error())
 					ipStr = cnc.lastNameserver
-					cnc.cache.SetWithExpire(cnc.clientName, net.IPv4zero, time.Now().Add(cnc.cacheTimeout))
+					cnc.cache.SetWithExpire(cnc.clientName, net.IPv4zero, time.Now().Add(cnc.retryTimeout))
 				}
 			} else {
 				isNew = true
@@ -92,7 +94,7 @@ func (cnc *cachedNameserversClient) ExchangeContext(ctx context.Context, m *D.Ms
 
 		ip = net.ParseIP(ipStr)
 		if ip == nil {
-			cnc.cache.SetWithExpire(cnc.clientName, net.IPv4zero, time.Now().Add(cnc.cacheTimeout))
+			cnc.cache.SetWithExpire(cnc.clientName, net.IPv4zero, time.Now().Add(cnc.retryTimeout))
 			cnc.mu.Unlock()
 			return nil, fmt.Errorf("%s: parse IP string (%v) error, storing <IPv4zero> into cache", cnc.clientName, ipStr)
 		}

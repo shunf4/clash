@@ -35,6 +35,10 @@ type ClashrayReverseContact struct {
 	ReverseIdentDomain string `yaml:"reverse-ident-domain"`
 	BridgeConnProxy    string `yaml:"bridge-conn-proxy"`
 	VisitorProxy       string `yaml:"visitor-proxy"`
+	// mod: optional name of the generated bridge-conn sub-rule. The rule name is
+	// exposed as metadata.InName on the publisher side ("BridgeWithRule:<name>"),
+	// so this is what shows up in the "PONG - Via" reply.
+	ReverseBridgeRuleName string `yaml:"reverse-bridge-rule-name"`
 	// WorkerNum currently is not used.
 	WorkerNum          int `yaml:"worker-num"`
 	RetryDelayMillisec int `yaml:"retry-delay-millisec"`
@@ -46,6 +50,12 @@ type ClashrayNetPublisher struct {
 	ContactProxyGroupFallbackInterval int                      `yaml:"contact-proxy-group-fallback-interval"`
 	ContactHealthcheckURL             string                   `yaml:"contact-healthcheck-url"`
 	ContactSendURL                    string                   `yaml:"contact-send-url"`
+	// mod: optional condition rules (single string, may nest AND/OR/NOT) that gate
+	// the service forwarding rules. When set, a service rule only matches if the
+	// condition matches as well; otherwise the packet falls through to the
+	// following rules. Empty means "no gate".
+	VisitorPreRules   string `yaml:"visitor-pre-rules"`
+	PublisherPreRules string `yaml:"publisher-pre-rules"`
 	LanContactsCommonFields           map[string]interface{}   `yaml:"lan-contacts-common-fields"`
 	LanContacts                       []map[string]interface{} `yaml:"lan-contacts"`
 	ReverseContacts                   []ClashrayReverseContact `yaml:"reverse-contacts"`
@@ -62,6 +72,8 @@ type Clashray struct {
 	ClashrayNetPublishersMap                    map[string]*ClashrayNetPublisher
 	ClashrayHTTPRedirectMap                     map[string]string
 	ClashrayTestCORSAllowedOrigins              []string
+	// mod: hosts the send server may be addressed as, filled by the config parser
+	ClashraySendAllowedHosts []string
 
 	ClashrayNetHTTPRedirectLocalListenAddr string `yaml:"clashray-net-http-redirect-local-listen-addr"`
 	ClashrayNetHTTPRedirectLocalListenPort uint16 `yaml:"clashray-net-http-redirect-local-listen-port-yes-i-dont-want-80"`

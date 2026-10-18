@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/metacubex/mihomo/common/guard"
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/iface"
 	"github.com/metacubex/mihomo/component/resolver"
@@ -183,6 +184,12 @@ func (f zeroTierStateFS) Open(name string) (fs.File, error) {
 }
 
 func (f zeroTierStateFS) WriteFile(name string, data []byte, perm fs.FileMode) error {
+	// mod: unified disk/network guard, see common/guard. ZeroTier persists its
+	// identity/node state on disk; deny mode must not create it silently.
+	if !guard.DiskAllowed() {
+		guard.Refuse("disk", "writing zerotier state "+name)
+		return guard.ErrDisabled
+	}
 	path := filepath.Join(f.directory, filepath.FromSlash(name))
 	err := os.MkdirAll(filepath.Dir(path), 0700)
 	if err == nil {
